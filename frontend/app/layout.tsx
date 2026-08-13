@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import Script from "next/script";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import "./globals.css";
 
@@ -14,8 +15,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Bambu-Spoolman",
-  description: "Integrating BambuLab 3D Printers and Spoolman",
+  title: "Spool Mapping",
+  description: "Map printer trays to filament inventory",
 };
 
 const themeScript = `
@@ -27,11 +28,7 @@ const themeScript = `
       savedTheme = localStorage.getItem(storageKey);
     } catch (_) {}
 
-    const theme = savedTheme === "light" || savedTheme === "dark"
-      ? savedTheme
-      : window.matchMedia("(prefers-color-scheme: dark)").matches
-        ? "dark"
-        : "light";
+    const theme = savedTheme === "light" ? "light" : "dark";
 
     document.documentElement.classList.toggle("dark", theme === "dark");
     document.documentElement.style.colorScheme = theme;
@@ -44,14 +41,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <head>
-        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
-      </head>
+    <html lang="en" className="dark" suppressHydrationWarning>
       <body
         className={`${geistSans.variable} ${geistMono.variable} min-h-screen antialiased`}
       >
-        <header className="mx-auto flex w-full max-w-2xl justify-end px-4 pt-4">
+        <Script id="theme-initializer" strategy="beforeInteractive">
+          {themeScript}
+        </Script>
+        <header className="mx-auto flex w-full max-w-6xl justify-end px-4 pt-4">
           <ThemeToggle />
         </header>
         {children}

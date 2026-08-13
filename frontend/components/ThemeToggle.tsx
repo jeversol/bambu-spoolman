@@ -21,13 +21,6 @@ function getCurrentTheme(): Theme {
 
 export function ThemeToggle() {
   useEffect(() => {
-    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    const handleSystemThemeChange = (event: MediaQueryListEvent) => {
-      if (localStorage.getItem(storageKey) !== null) return;
-
-      const nextTheme = event.matches ? "dark" : "light";
-      applyTheme(nextTheme);
-    };
     const handleStorage = (event: StorageEvent) => {
       if (event.key !== storageKey) return;
 
@@ -35,17 +28,13 @@ export function ThemeToggle() {
         ? event.newValue === "dark"
           ? "dark"
           : "light"
-        : mediaQuery.matches
-          ? "dark"
-          : "light";
+        : "dark";
       applyTheme(nextTheme);
     };
 
-    mediaQuery.addEventListener("change", handleSystemThemeChange);
     window.addEventListener("storage", handleStorage);
 
     return () => {
-      mediaQuery.removeEventListener("change", handleSystemThemeChange);
       window.removeEventListener("storage", handleStorage);
     };
   }, []);

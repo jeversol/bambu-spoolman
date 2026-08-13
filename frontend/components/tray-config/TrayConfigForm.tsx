@@ -1,23 +1,23 @@
 "use client";
 
-import { Spool } from "@/lib/proto/bambu_spoolman/grpc/spoolman";
-import { SpoolRadioGroup } from "./SpoolRadioGroup";
-import { Button, ButtonLoading } from "../ui/button";
-import { useActionState, useMemo, useState } from "react";
-import {
-  updateTrayAssignment,
-  type UpdateTrayAssignmentActionData,
-} from "./actions";
-import { Alert } from "../ui/alert";
+import { type IDetectedBarcode, Scanner } from "@yudiel/react-qr-scanner";
 import { AlertCircle, SearchIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { IDetectedBarcode, Scanner } from "@yudiel/react-qr-scanner";
+import { useActionState, useMemo, useState } from "react";
 import { useCameraAvailable } from "@/lib/hooks/useCameraAvailable";
+import type { Spool } from "@/lib/proto/bambu_spoolman/grpc/spoolman";
+import { Alert } from "../ui/alert";
+import { Button, ButtonLoading } from "../ui/button";
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupInput,
 } from "../ui/input-group";
+import {
+  type UpdateTrayAssignmentActionData,
+  updateTrayAssignment,
+} from "./actions";
+import { SpoolRadioGroup } from "./SpoolRadioGroup";
 
 const URL_REGEX = /https?:\/\/.*\/(\d+)/i;
 const SPOOL_ID_REGEX = /web\+spoolman:s-(\d+)/i;
@@ -114,20 +114,25 @@ export function TrayConfigForm(props: Props) {
   };
 
   const filteredSpools = useMemo(() => {
-    if (!searchQuery) {
+    const terms = searchQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (terms.length === 0) {
       return props.allSpools;
     }
-    // Filter spools based on the following criteria:
-    // 1. Spool id
-    // 2. Material
-    // 3. Vendor
+
     return props.allSpools.filter((spool) => {
-      const query = searchQuery.toLowerCase();
-      return (
-        spool.id.toString().includes(query) ||
-        spool.filament?.material.toLowerCase().includes(query) ||
-        spool.filament?.vendor?.name.toLowerCase().includes(query)
-      );
+      const searchable = [
+        spool.id.toString(),
+        spool.filament?.name,
+        spool.filament?.vendor?.name,
+        spool.filament?.material,
+        spool.filament?.colorHex,
+        spool.filament?.multiColorHexes,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      return terms.every((term) => searchable.includes(term));
     });
   }, [searchQuery, props.allSpools]);
 
@@ -159,7 +164,7 @@ export function TrayConfigForm(props: Props) {
           )}
           <InputGroup className="w-full mb-3">
             <InputGroupInput
-              placeholder="Search for a spool"
+              placeholder="Search ID, name, vendor, material, or color"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
