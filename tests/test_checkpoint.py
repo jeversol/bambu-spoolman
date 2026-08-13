@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import unittest
@@ -22,10 +23,16 @@ class CheckpointRecoveryTests(unittest.TestCase):
         environment.start()
         self.addCleanup(environment.stop)
 
-    def save_checkpoint(self, task_id="task-1", subtask_id="subtask-1"):
+    def save_checkpoint(
+        self,
+        task_id="task-1",
+        subtask_id="subtask-1",
+        spent_layers=(0, 1, 3),
+    ):
         save_checkpoint(
             model_path=self.model_path,
             current_layer=12,
+            spent_layers=spent_layers,
             task_id=task_id,
             subtask_id=subtask_id,
             ams_mapping=[0, -1, -1, -1],
@@ -53,6 +60,28 @@ class CheckpointRecoveryTests(unittest.TestCase):
         result = recover_model("another-task", "another-subtask")
 
         self.assertIsNone(result)
+
+    def test_recovers_exact_spent_layers(self):
+        self.save_checkpoint(spent_layers=(0, 2, 5))
+
+        result = recover_model("task-1", "subtask-1")
+
+        self.assertEqual(result[3], [0, 2, 5])
+
+    def test_recovers_legacy_checkpoint_from_current_layer(self):
+        self.save_checkpoint()
+        metadata_path = os.path.join(
+            self.config_directory, "checkpoint", "metadata.json"
+        )
+        with open(metadata_path) as metadata_file:
+            metadata = json.load(metadata_file)
+        metadata.pop("spent_layers")
+        with open(metadata_path, "w") as metadata_file:
+            json.dump(metadata, metadata_file)
+
+        result = recover_model("task-1", "subtask-1")
+
+        self.assertEqual(result[3], list(range(13)))
 
 
 if __name__ == "__main__":

@@ -32,6 +32,7 @@ def save_checkpoint(
     *,
     model_path,
     current_layer,
+    spent_layers,
     task_id,
     subtask_id,
     ams_mapping,
@@ -44,6 +45,7 @@ def save_checkpoint(
     existing_metadata["task_id"] = task_id
     existing_metadata["subtask_id"] = subtask_id
     existing_metadata["current_layer"] = current_layer
+    existing_metadata["spent_layers"] = sorted(spent_layers)
     existing_metadata["ams_mapping"] = ams_mapping
     existing_metadata["gcode_file_name"] = gcode_file_name
     existing_metadata["using_ams"] = using_ams
@@ -56,9 +58,10 @@ def clear():
         shutil.rmtree(checkpoint_directory())
 
 
-def update_layer(layer):
+def update_layer(layer, spent_layers):
     metadata = get_checkpoint_metadata()
     metadata["current_layer"] = layer
+    metadata["spent_layers"] = sorted(spent_layers)
     _save_checkpoint_metadata(metadata)
 
 
@@ -101,6 +104,7 @@ def recover_model(task_id, subtask_id):
         return None
 
     current_layer = metadata.get("current_layer")
+    spent_layers = metadata.get("spent_layers")
     ams_mapping = metadata.get("ams_mapping")
     gcode_file_name = metadata.get("gcode_file_name")
     using_ams = metadata.get("using_ams")
@@ -114,4 +118,16 @@ def recover_model(task_id, subtask_id):
         logger.error("Checkpoint metadata is incomplete")
         return None
 
-    return model_path, gcode_file_name, current_layer, ams_mapping, using_ams
+    if spent_layers is None:
+        # Checkpoints created before spent_layers was added assumed that every
+        # layer through current_layer had been consumed successfully.
+        spent_layers = list(range(current_layer + 1))
+
+    return (
+        model_path,
+        gcode_file_name,
+        current_layer,
+        spent_layers,
+        ams_mapping,
+        using_ams,
+    )

@@ -111,6 +111,7 @@ class FilamentUsageTracker:
         save_checkpoint(
             model_path=model,
             current_layer=0,
+            spent_layers=self.spent_layers,
             task_id=print_obj.get("task_id"),
             subtask_id=print_obj.get("subtask_id"),
             ams_mapping=self.ams_mapping,
@@ -176,7 +177,7 @@ class FilamentUsageTracker:
 
             if spent:
                 self.spent_layers.add(layer_to_spend)
-        update_layer(layer)
+        update_layer(layer, set(self.spent_layers))
 
     def _handle_print_end(self):
         logger.info("Print ended!")
@@ -300,12 +301,19 @@ class FilamentUsageTracker:
         result = recover_model(task_id, subtask_id)
         if result is None:
             return
-        model_path, gcode_file_name, current_layer, ams_mapping, using_ams = result
+        (
+            model_path,
+            gcode_file_name,
+            current_layer,
+            spent_layers,
+            ams_mapping,
+            using_ams,
+        ) = result
 
         logger.info("Recovered model from checkpoint")
 
         self._load_model(model_path, gcode_file_name)
-        self.spent_layers = set(range(current_layer + 1))
+        self.spent_layers = set(spent_layers)
         self.ams_mapping = ams_mapping
         self.current_layer = current_layer
         self.using_ams = using_ams
