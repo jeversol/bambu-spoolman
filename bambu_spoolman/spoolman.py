@@ -169,8 +169,11 @@ class SpoolmanClient:
             return False
         # Get extra data
         extra = existing_spool.get("extra", {})
-        # Set the new tray uuid
-        extra[extra_field] = f'"{tray_uuid}"'
+        # An empty UUID permanently removes the RFID association.
+        if tray_uuid:
+            extra[extra_field] = f'"{tray_uuid}"'
+        else:
+            extra.pop(extra_field, None)
         # Update the spool
         try:
             response = requests.patch(

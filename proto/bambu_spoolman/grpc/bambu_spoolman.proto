@@ -31,6 +31,9 @@ service BambuSpoolman {
 
     // Sets a tray's UUID
     rpc SetTrayUUID(SetSpoolUUIDRequest) returns (google.protobuf.Empty);
+
+    // Temporarily disables RFID control for a tray until its spool changes
+    rpc OverrideTrayRFID(OverrideTrayRFIDRequest) returns (google.protobuf.Empty);
 }
 
 message TrayCountResponse {
@@ -63,6 +66,11 @@ message GetSpoolbyUUIDRequest {
 
 message SetSpoolUUIDRequest {
     int64 spool_id = 1;
+    string uuid = 2;
+}
+
+message OverrideTrayRFIDRequest {
+    int64 tray_id = 1;
     string uuid = 2;
 }
 

@@ -170,12 +170,24 @@ class BambuSpoolmanServicer(bambu_spoolman_pb2_grpc.BambuSpoolmanServicer):
             )
 
         success = spoolman_instance().set_tray_uuid(spool_id, tray_uuid)
-
-        AutomaticSpoolSwitch.get_instance().sync()
-
         if not success:
             await context.abort(
                 grpc.StatusCode.INTERNAL, "Failed to set tray UUID for spool"
+            )
+
+        AutomaticSpoolSwitch.get_instance().sync()
+        return Empty()
+
+    async def OverrideTrayRFID(
+        self, request: pb2.OverrideTrayRFIDRequest, context: ServicerContext
+    ):
+        success = AutomaticSpoolSwitch.get_instance().override_tray(
+            int(request.tray_id), request.uuid
+        )
+        if not success:
+            await context.abort(
+                grpc.StatusCode.INVALID_ARGUMENT,
+                "The RFID tag is no longer present in this tray",
             )
         return Empty()
 

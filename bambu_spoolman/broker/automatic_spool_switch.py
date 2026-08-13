@@ -60,8 +60,14 @@ class AutomaticSpoolSwitch:
         for data in ams_data:
             for tray in data.get("tray", []):
                 tray_id = int(data["id"]) * 4 + int(tray["id"])
-                tray_uuid = tray_uuid = tray.get("tray_uuid", None)
+                tray_uuid = tray.get("tray_uuid", None)
                 if tray_uuid is None or tray_uuid == UNKNOWN_TRAY:
+                    self._unlock_tray(tray_id, clear=False)
+                elif self._is_overridden(tray_id, tray_uuid):
+                    logger.debug(
+                        "RFID mapping for tray {} is temporarily overridden",
+                        tray_id,
+                    )
                     self._unlock_tray(tray_id, clear=False)
                 else:
                     spool = self.spoolman_client.lookup_by_tray_uuid(tray_uuid)
@@ -87,13 +93,14 @@ class AutomaticSpoolSwitch:
                 prev = prev_tray_mapping.get(tray_id, None)
                 logger.debug("Tray {}: {} -> {}", tray_id, prev, tray_uuid)
                 if prev != tray_uuid:
+                    self._clear_override(tray_id)
                     if (
                         tray_uuid == UNKNOWN_TRAY or tray_uuid is None
                     ) and prev is not None:
                         # Tray was removed. Unlock the spool and clear the mapping
                         logger.debug("Unlocking tray {}: {}", tray_id, prev)
                         self._unlock_tray(tray_id, clear=True)
-                    if prev != tray_uuid:
+                    else:
                         # Spool was changed. Update the mapping and lock if it exists
                         logger.debug("Tray changed. Looking up spool {}", tray_uuid)
                         spool = self.spoolman_client.lookup_by_tray_uuid(tray_uuid)
@@ -106,6 +113,52 @@ class AutomaticSpoolSwitch:
                             self._handle_missing_spool(tray_id, tray_uuid, tray)
 
                 self.tray_mapping[tray_id] = tray_uuid
+
+    def override_tray(self, tray_id, tray_uuid):
+        """Pause RFID control while the specified tag remains in the tray."""
+        if not stateful_printer_info.connected:
+            return False
+
+        print_obj = stateful_printer_info.get_info().get("print", {})
+        current_uuid = None
+        for ams in print_obj.get("ams", {}).get("ams", []):
+            for tray in ams.get("tray", []):
+                current_tray_id = int(ams["id"]) * 4 + int(tray["id"])
+                if current_tray_id == tray_id:
+                    current_uuid = tray.get("tray_uuid")
+                    break
+
+        if not tray_uuid or current_uuid != tray_uuid:
+            return False
+
+        settings = load_settings()
+        overrides = settings.get("rfid_overrides", {})
+        overrides[str(tray_id)] = tray_uuid
+        settings["rfid_overrides"] = overrides
+
+        locked = settings.get("locked_trays", [])
+        settings["locked_trays"] = [
+            locked_id for locked_id in locked if locked_id != tray_id
+        ]
+        save_settings(settings)
+        logger.info("Temporarily overrode RFID mapping for tray {}", tray_id)
+        return True
+
+    def _is_overridden(self, tray_id, tray_uuid):
+        settings = load_settings()
+        overrides = settings.get("rfid_overrides", {})
+        return overrides.get(str(tray_id)) == tray_uuid
+
+    def _clear_override(self, tray_id):
+        settings = load_settings()
+        overrides = settings.get("rfid_overrides", {})
+        if str(tray_id) not in overrides:
+            return
+
+        del overrides[str(tray_id)]
+        settings["rfid_overrides"] = overrides
+        save_settings(settings)
+        logger.debug("Cleared temporary RFID override for tray {}", tray_id)
 
     def _handle_missing_spool(self, tray_id, tray_uuid, tray):
         """

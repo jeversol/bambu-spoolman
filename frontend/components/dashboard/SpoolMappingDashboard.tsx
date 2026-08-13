@@ -7,8 +7,8 @@ import {
   LockKeyhole,
   WifiOff,
 } from "lucide-react";
-import Link from "next/link";
 import { useState } from "react";
+import { RfidMappingDialog } from "./RfidMappingDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { DashboardSpool, DashboardTray } from "@/lib/dashboard";
@@ -57,15 +57,16 @@ function SpoolMeter({ spool }: { spool: DashboardSpool | null }) {
 function TrayCard({
   tray,
   onAssign,
+  onRfidDetails,
 }: {
   tray: DashboardTray;
   onAssign: (tray: DashboardTray) => void;
+  onRfidDetails: (tray: DashboardTray) => void;
 }) {
   const needsMapping = tray.occupied === true && !tray.spool;
   const isEmpty = tray.occupied === false;
   const displayName = tray.printerName || tray.spool?.name;
-  const detailHref = `/ams/${tray.amsNumber}/tray/${tray.trayNumber}`;
-
+  const canManageRfid = Boolean(tray.rfidTag && tray.spool);
   return (
     <article
       className={cn(
@@ -142,8 +143,13 @@ function TrayCard({
       </div>
 
       {tray.locked ? (
-        <Button variant="outline" className="mx-4 mb-4 mt-4" asChild>
-          <Link href={detailHref}>View RFID mapping</Link>
+        <Button
+          variant="outline"
+          className="mx-4 mb-4 mt-4"
+          disabled={!canManageRfid}
+          onClick={() => onRfidDetails(tray)}
+        >
+          {canManageRfid ? "View RFID mapping" : "RFID details unavailable"}
         </Button>
       ) : (
         <Button
@@ -167,6 +173,7 @@ export function SpoolMappingDashboard({
 }: Props) {
   const [assignmentTarget, setAssignmentTarget] =
     useState<AssignmentTarget | null>(null);
+  const [rfidTarget, setRfidTarget] = useState<DashboardTray | null>(null);
   const needsMapping = trays.filter(
     (tray) => tray.occupied === true && !tray.spool,
   );
@@ -306,6 +313,7 @@ export function SpoolMappingDashboard({
                 key={tray.id}
                 tray={tray}
                 onAssign={setAssignmentTarget}
+                onRfidDetails={setRfidTarget}
               />
             ))}
           </div>
@@ -326,6 +334,14 @@ export function SpoolMappingDashboard({
           spools={spools}
           assignments={assignments}
           onClose={() => setAssignmentTarget(null)}
+        />
+      )}
+
+      {rfidTarget && (
+        <RfidMappingDialog
+          key={`${rfidTarget.id}-${rfidTarget.rfidTag}`}
+          tray={rfidTarget}
+          onClose={() => setRfidTarget(null)}
         />
       )}
     </>

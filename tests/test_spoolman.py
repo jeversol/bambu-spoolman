@@ -36,6 +36,25 @@ class SpoolmanClientTests(unittest.TestCase):
             timeout=12.5,
         )
 
+    @patch("bambu_spoolman.spoolman.requests.patch")
+    def test_empty_tray_uuid_removes_rfid_field(self, patch_request):
+        patch_request.return_value = Mock()
+        client = SpoolmanClient("http://spoolman.test")
+        client.get_spool = Mock(
+            return_value={"id": 32, "extra": {"rfid_tag": '"tag-32"'}}
+        )
+
+        with patch.dict(os.environ, {"SPOOLMAN_SPOOL_FIELD_NAME": "rfid_tag"}):
+            result = client.set_tray_uuid(32, "")
+
+        self.assertTrue(result)
+        patch_request.assert_called_once_with(
+            "http://spoolman.test/api/v1/spool/32",
+            json={"extra": {}},
+            verify=True,
+            timeout=30.0,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

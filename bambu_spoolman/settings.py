@@ -36,4 +36,9 @@ def load_settings():
             if os.environ.get("SPOOLMAN_SPOOL_FIELD_NAME") is None:
                 data["locked_trays"] = []
             return data
-    return {"trays": {}, "tray_count": 0}
+    return {
+        "trays": {},
+        "tray_count": 0,
+        "locked_trays": [],
+        "rfid_overrides": {},
+    }
