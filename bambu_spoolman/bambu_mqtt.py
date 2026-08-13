@@ -123,12 +123,14 @@ class MqttHandler(threading.Thread):
                     logger.error(
                         f"Error occurred in MQTT loop. Retrying in {duration}s: {e}"
                     )
+                    self._reset_client()
                     time.sleep(duration)
             except Exception as e:
                 duration = self._backoff()
                 logger.exception(
                     f"Error occurred in MQTT loop. Retrying in {duration}s: {e}"
                 )
+                self._reset_client()
                 time.sleep(duration)
 
     def add_callback(self, callback: Callable[["MqttHandler", dict], None]):
@@ -195,6 +197,22 @@ class MqttHandler(threading.Thread):
         client.on_disconnect = self._on_disconnect
 
         return client
+
+    def _reset_client(self):
+        """Replace a client whose packet parser may be in an invalid state."""
+        old_client = self.client
+
+        if self.connected:
+            self.connected = False
+            for callback in self.callbacks["on_disconnect"]:
+                self._run_callback("on_disconnect", callback, self)
+
+        try:
+            old_client.disconnect()
+        except Exception as e:
+            logger.debug("Failed to disconnect broken MQTT client: {}", e)
+
+        self.client = self._create_client()
 
     def _subscribe(self):
         self.client.subscribe(f"device/{self.printer_serial}/report")
