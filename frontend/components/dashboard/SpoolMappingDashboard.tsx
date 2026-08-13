@@ -7,7 +7,8 @@ import {
   LockKeyhole,
   WifiOff,
 } from "lucide-react";
-import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import { RfidMappingDialog } from "./RfidMappingDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,6 +26,33 @@ type Props = {
   spools: DashboardSpool[];
   assignments: Record<number, string>;
 };
+
+const DASHBOARD_REFRESH_INTERVAL_MS = 5_000;
+
+function useDashboardAutoRefresh(paused: boolean) {
+  const router = useRouter();
+
+  useEffect(() => {
+    if (paused) return;
+
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        router.refresh();
+      }
+    };
+
+    const interval = window.setInterval(
+      refreshWhenVisible,
+      DASHBOARD_REFRESH_INTERVAL_MS,
+    );
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [paused, router]);
+}
 
 function SpoolMeter({ spool }: { spool: DashboardSpool | null }) {
   const percentage = spool?.remainingPercent;
@@ -180,6 +208,9 @@ export function SpoolMappingDashboard({
   const [assignmentTarget, setAssignmentTarget] =
     useState<AssignmentTarget | null>(null);
   const [rfidTarget, setRfidTarget] = useState<DashboardTray | null>(null);
+  useDashboardAutoRefresh(
+    assignmentTarget !== null || rfidTarget !== null,
+  );
   const needsMapping = trays.filter(
     (tray) => tray.occupied === true && !tray.spool,
   );
