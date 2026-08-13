@@ -1,5 +1,7 @@
 import os
+import tempfile
 import unittest
+import zipfile
 from unittest.mock import Mock, call, patch
 
 from bambu_spoolman.broker.filament_usage_tracker import FilamentUsageTracker
@@ -217,6 +219,51 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
 
         self.addCleanup(os.remove, model_path)
         get.assert_called_once_with("http://printer/model.3mf", timeout=12.5)
+
+    def test_load_model_rejects_invalid_utf8_gcode(self):
+        archive_file = tempfile.NamedTemporaryFile(suffix=".3mf", delete=False)
+        archive_file.close()
+        self.addCleanup(os.remove, archive_file.name)
+        with zipfile.ZipFile(archive_file.name, "w") as archive:
+            archive.writestr("Metadata/plate.gcode", b"M620 S0\nG1 E\xff\n")
+
+        loaded = self.tracker._load_model(
+            archive_file.name, "Metadata/plate.gcode"
+        )
+
+        self.assertFalse(loaded)
+        self.assertIsNone(self.tracker.active_model)
+
+    def test_load_model_rejects_malformed_gcode(self):
+        archive_file = tempfile.NamedTemporaryFile(suffix=".3mf", delete=False)
+        archive_file.close()
+        self.addCleanup(os.remove, archive_file.name)
+        with zipfile.ZipFile(archive_file.name, "w") as archive:
+            archive.writestr("Metadata/plate.gcode", "M620 S0\nM73 Lnot-a-layer\n")
+
+        loaded = self.tracker._load_model(
+            archive_file.name, "Metadata/plate.gcode"
+        )
+
+        self.assertFalse(loaded)
+        self.assertIsNone(self.tracker.active_model)
+
+    @patch("bambu_spoolman.broker.filament_usage_tracker.save_checkpoint")
+    @patch("bambu_spoolman.broker.filament_usage_tracker.clear_checkpoint")
+    def test_print_start_does_not_checkpoint_invalid_model(
+        self, clear_checkpoint, save_checkpoint
+    ):
+        model_file = tempfile.NamedTemporaryFile(suffix=".3mf", delete=False)
+        model_file.close()
+        self.tracker._retrieve_model = Mock(return_value=model_file.name)
+        self.tracker._load_model = Mock(return_value=False)
+
+        self.tracker._handle_print_start(
+            {"url": "file:///model.3mf", "use_ams": False}
+        )
+
+        save_checkpoint.assert_not_called()
+        self.assertFalse(os.path.exists(model_file.name))
 
 
 if __name__ == "__main__":

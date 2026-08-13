@@ -11,7 +11,14 @@ def open_gcode(path, gcode_path=None):
     """Open a G-code file inside a 3MF archive as a streaming text reader."""
     logger.debug("Opening GCODE from {}", path)
 
-    with zipfile.ZipFile(path, "r") as archive:
+    try:
+        archive = zipfile.ZipFile(path, "r")
+    except (OSError, zipfile.BadZipFile) as e:
+        logger.error("Could not open 3MF archive: {}", e)
+        yield None
+        return
+
+    with archive:
         if gcode_path is None:
             metadata_path = "Metadata/model_settings.config"
             logger.debug("Looking for GCODE in {}", metadata_path)
@@ -20,6 +27,15 @@ def open_gcode(path, gcode_path=None):
                     root = ET.parse(metadata_file).getroot()
             except KeyError:
                 logger.error("Could not find model settings in 3MF archive")
+                yield None
+                return
+            except (ET.ParseError, OSError) as e:
+                logger.error("Could not parse model settings: {}", e)
+                yield None
+                return
+
+            if not len(root):
+                logger.error("Model settings do not contain a plate")
                 yield None
                 return
 

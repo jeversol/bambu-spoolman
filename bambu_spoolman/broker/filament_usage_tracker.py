@@ -1,5 +1,6 @@
 import os
 import tempfile
+import zipfile
 from urllib.parse import urlparse
 
 import requests
@@ -324,11 +325,18 @@ class FilamentUsageTracker:
         return retrieve_3mf(model_path)
 
     def _load_model(self, model_path, gcode_file):
-        with open_gcode(model_path, gcode_file) as gcode:
-            if gcode is None:
-                logger.error("Failed to extract gcode from model")
-                return False
-            self.active_model = evaluate_gcode(gcode)
+        self.active_model = None
+        try:
+            with open_gcode(model_path, gcode_file) as gcode:
+                if gcode is None:
+                    logger.error("Failed to extract gcode from model")
+                    return False
+                active_model = evaluate_gcode(gcode)
+        except (OSError, UnicodeError, ValueError, zipfile.BadZipFile) as e:
+            logger.error("Failed to parse GCODE from model: {}", e)
+            return False
+
+        self.active_model = active_model
         logger.info("Model loaded successfully")
 
         total_filament_usage = {}

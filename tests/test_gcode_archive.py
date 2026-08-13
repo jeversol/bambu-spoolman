@@ -51,6 +51,31 @@ class GcodeArchiveTests(unittest.TestCase):
         with open_gcode(archive_path) as gcode:
             self.assertIsNone(gcode)
 
+    def test_returns_none_for_corrupt_archive(self):
+        archive_file = tempfile.NamedTemporaryFile(suffix=".3mf", delete=False)
+        archive_file.write(b"not a zip archive")
+        archive_file.close()
+        self.addCleanup(os.remove, archive_file.name)
+
+        with open_gcode(archive_file.name) as gcode:
+            self.assertIsNone(gcode)
+
+    def test_returns_none_for_malformed_model_settings(self):
+        archive_path = self.create_archive(
+            {"Metadata/model_settings.config": "<root><plate>"}
+        )
+
+        with open_gcode(archive_path) as gcode:
+            self.assertIsNone(gcode)
+
+    def test_returns_none_when_model_settings_have_no_plate(self):
+        archive_path = self.create_archive(
+            {"Metadata/model_settings.config": "<root/>"}
+        )
+
+        with open_gcode(archive_path) as gcode:
+            self.assertIsNone(gcode)
+
 
 if __name__ == "__main__":
     unittest.main()
