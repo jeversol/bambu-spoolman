@@ -66,14 +66,24 @@ def recover_model(task_id, subtask_id):
     logger.info("Attempting to recover task {} subtask {}", task_id, subtask_id)
     metadata = get_checkpoint_metadata()
 
+    if not metadata:
+        logger.error("No checkpoint saved")
+        return None
+
     checkpoint_task_id = metadata.get("task_id")
     checkpoint_subtask_id = metadata.get("subtask_id")
 
-    if checkpoint_task_id is None or checkpoint_subtask_id is None:
-        logger.error("No checkpoint saved.", task_id)
-        return None
-
-    if checkpoint_task_id != task_id or checkpoint_subtask_id != subtask_id:
+    task_mismatch = (
+        task_id is not None
+        and checkpoint_task_id is not None
+        and checkpoint_task_id != task_id
+    )
+    subtask_mismatch = (
+        subtask_id is not None
+        and checkpoint_subtask_id is not None
+        and checkpoint_subtask_id != subtask_id
+    )
+    if task_mismatch or subtask_mismatch:
         logger.error(
             "Recovered task does not match current task. Expected task id {} and subtask id {}, got task id {} and subtask id {}",
             checkpoint_task_id,
