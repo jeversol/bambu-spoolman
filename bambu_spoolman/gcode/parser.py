@@ -1,3 +1,4 @@
+import io
 import re
 
 from loguru import logger
@@ -13,7 +14,7 @@ class GCodeOperation:
 
     def _parse(self, raw_line):
         # Split the line into operation and comment
-        parts = list(map(lambda x: x.strip(), raw_line.split(";")))
+        parts = list(map(lambda x: x.strip(), raw_line.split(";", 1)))
         if len(parts) > 1:
             self.comment = parts[1].strip()
 
@@ -30,8 +31,9 @@ class GCodeOperation:
 
 
 def parse_gcode(gcode):
-    operations = []
-    for line in gcode.split("\n"):
+    lines = io.StringIO(gcode) if isinstance(gcode, str) else gcode
+
+    for line in lines:
         line = line.strip()
         if not line:
             continue
@@ -39,26 +41,22 @@ def parse_gcode(gcode):
             continue
 
         # logger.debug(f"Parsing line: {line}")
-        operation = GCodeOperation(line)
-        operations.append(operation)
-
-    return operations
+        yield GCodeOperation(line)
 
 
 def evaluate_gcode(gcode):
     """
     Evaluate the gcode and return the filament usage (in mm) per layer
     """
-    operations = parse_gcode(gcode)
-    logger.debug(f"Found {len(operations)} operations")
-
     current_layer = 0  # The current layer
     current_extrusion = {}  # Running total of extrusion per filament on this layer
     active_filament = None  # The currently active filament
 
     layer_filaments = {}  # Filament usage per layer
 
-    for operation in operations:
+    operation_count = 0
+    for operation in parse_gcode(gcode):
+        operation_count += 1
         if operation.operation == "M73":  # Layer change
             if layer := operation.params.get("L"):
                 next_layer = int(layer)
@@ -95,6 +93,7 @@ def evaluate_gcode(gcode):
 
                 current_extruded = current_extrusion.get(active_filament, 0)
                 current_extrusion[active_filament] = current_extruded + extrusion_amount
+    logger.debug("Found {} operations", operation_count)
     # Finished
     if current_extrusion:
         layer_filaments[current_layer] = current_extrusion.copy()

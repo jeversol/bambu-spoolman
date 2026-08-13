@@ -14,7 +14,7 @@ from bambu_spoolman.broker.checkpoint import (
     save_checkpoint,
     update_layer,
 )
-from bambu_spoolman.gcode.bambu import extract_gcode
+from bambu_spoolman.gcode.bambu import open_gcode
 from bambu_spoolman.gcode.parser import evaluate_gcode
 from bambu_spoolman.settings import EXTERNAL_SPOOL_ID, load_settings
 from bambu_spoolman.spoolman import new_client
@@ -106,7 +106,9 @@ class FilamentUsageTracker:
 
         gcode_file_name = print_obj.get("param")
 
-        self._load_model(model, gcode_file_name)
+        if not self._load_model(model, gcode_file_name):
+            os.remove(model)
+            return
 
         save_checkpoint(
             model_path=model,
@@ -278,12 +280,11 @@ class FilamentUsageTracker:
         return retrieve_3mf(model_path)
 
     def _load_model(self, model_path, gcode_file):
-        gcode = extract_gcode(model_path, gcode_file)
-
-        if gcode is None:
-            logger.error("Failed to extract gcode from model")
-            return
-        self.active_model = evaluate_gcode(gcode)
+        with open_gcode(model_path, gcode_file) as gcode:
+            if gcode is None:
+                logger.error("Failed to extract gcode from model")
+                return False
+            self.active_model = evaluate_gcode(gcode)
         logger.info("Model loaded successfully")
 
         total_filament_usage = {}
@@ -296,6 +297,8 @@ class FilamentUsageTracker:
 
         for filament, usage in total_filament_usage.items():
             logger.info("Filament {} usage: {}mm", filament, usage)
+
+        return True
 
     def _attempt_print_resume(self, task_id, subtask_id):
         result = recover_model(task_id, subtask_id)
@@ -312,7 +315,8 @@ class FilamentUsageTracker:
 
         logger.info("Recovered model from checkpoint")
 
-        self._load_model(model_path, gcode_file_name)
+        if not self._load_model(model_path, gcode_file_name):
+            return
         self.spent_layers = set(spent_layers)
         self.ams_mapping = ams_mapping
         self.current_layer = current_layer
