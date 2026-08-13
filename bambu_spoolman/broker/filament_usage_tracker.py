@@ -54,12 +54,16 @@ class FilamentUsageTracker:
                     self._handle_layer_change(layer)
                     self.current_layer = layer
 
-            if (
-                self.gcode_state == "FINISH"
-                and previous_gcode_state != "FINISH"
-                and self.active_model is not None
-            ):
-                self._handle_print_end()
+            if self.gcode_state == "FINISH":
+                if self.active_model is None and previous_gcode_state != "FINISH":
+                    # The service may restart after the printer finishes but
+                    # before all Spoolman updates succeed. Recover the pending
+                    # checkpoint on the first FINISH status after startup.
+                    self._attempt_print_resume(
+                        print_obj.get("task_id"), print_obj.get("subtask_id")
+                    )
+                if self.active_model is not None:
+                    self._handle_print_end()
 
             if (
                 self.gcode_state == "FAILURE"
@@ -195,20 +199,34 @@ class FilamentUsageTracker:
         logger.info("Print ended!")
 
         # Spend all layers that haven't already been spent
-        if self.active_model is not None:
-            for layer in set(self.active_model.keys()) - self.spent_layers:
+        remaining_layers = set(self.active_model or {}) - self.spent_layers
+        if remaining_layers:
+            for layer in sorted(remaining_layers):
                 logger.debug(
                     f"Spending layer {layer} as it was not spent during the print"
                 )
-                self._handle_layer_change(layer)
+            # A single layer-change pass includes every earlier unspent model
+            # layer, so each outstanding layer is attempted at most once for
+            # this status update.
+            self._handle_layer_change(max(remaining_layers))
+
+        remaining_layers = set(self.active_model or {}) - self.spent_layers
+        if remaining_layers:
+            logger.warning(
+                "Print ended with unspent layers {}. Will retry on the next status update",
+                sorted(remaining_layers),
+            )
+            return False
 
         self.active_model = None
         self.ams_mapping = None
+        self.spent_layers = set()
         self.spent_filaments = {}
         self.using_ams = False
         self.current_layer = None
 
         clear_checkpoint()
+        return True
 
     def _handle_print_failure(self):
         logger.info("Print failed!")

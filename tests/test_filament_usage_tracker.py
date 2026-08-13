@@ -116,6 +116,75 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
             ],
         )
 
+    @patch("bambu_spoolman.broker.filament_usage_tracker.clear_checkpoint")
+    @patch("bambu_spoolman.broker.filament_usage_tracker.update_layer")
+    def test_print_end_keeps_checkpoint_when_usage_remains(
+        self, update_layer, clear_checkpoint
+    ):
+        self.tracker._spend_filament_for_layer.side_effect = RuntimeError(
+            "Spoolman unavailable"
+        )
+
+        completed = self.tracker._handle_print_end()
+
+        self.assertFalse(completed)
+        self.assertIsNotNone(self.tracker.active_model)
+        self.assertEqual(self.tracker.spent_layers, set())
+        clear_checkpoint.assert_not_called()
+
+    @patch("bambu_spoolman.broker.filament_usage_tracker.clear_checkpoint")
+    @patch("bambu_spoolman.broker.filament_usage_tracker.update_layer")
+    def test_retries_finish_status_until_all_usage_succeeds(
+        self, update_layer, clear_checkpoint
+    ):
+        self.tracker.gcode_state = "RUNNING"
+        self.tracker.ams_mapping = None
+        self.tracker.using_ams = False
+        self.tracker._spend_filament_for_layer.side_effect = [
+            RuntimeError("Spoolman unavailable"),
+            True,
+            True,
+        ]
+        finish_message = {"print": {"command": "push_status", "gcode_state": "FINISH"}}
+
+        self.tracker.on_message(None, finish_message)
+        self.assertIsNotNone(self.tracker.active_model)
+        clear_checkpoint.assert_not_called()
+
+        self.tracker.on_message(None, finish_message)
+
+        self.assertIsNone(self.tracker.active_model)
+        self.assertEqual(self.tracker.spent_layers, set())
+        clear_checkpoint.assert_called_once_with()
+        self.assertEqual(
+            self.tracker._spend_filament_for_layer.call_args_list,
+            [call(0), call(1), call(0)],
+        )
+
+    def test_recovers_pending_checkpoint_when_starting_in_finish_state(self):
+        self.tracker.active_model = None
+        self.tracker.gcode_state = None
+        self.tracker._attempt_print_resume = Mock()
+        self.tracker._attempt_print_resume.side_effect = lambda *_: setattr(
+            self.tracker, "active_model", {0: {0: 10}}
+        )
+        self.tracker._handle_print_end = Mock()
+        finish_message = {
+            "print": {
+                "command": "push_status",
+                "gcode_state": "FINISH",
+                "task_id": "task-1",
+                "subtask_id": "subtask-1",
+            }
+        }
+
+        self.tracker.on_message(None, finish_message)
+
+        self.tracker._attempt_print_resume.assert_called_once_with(
+            "task-1", "subtask-1"
+        )
+        self.tracker._handle_print_end.assert_called_once_with()
+
     @patch("bambu_spoolman.broker.filament_usage_tracker.recover_model")
     def test_restores_exact_spent_layers_from_checkpoint(self, recover_model):
         recover_model.return_value = (
