@@ -29,6 +29,10 @@ type Props = {
 function SpoolMeter({ spool }: { spool: DashboardSpool | null }) {
   const percentage = spool?.remainingPercent;
   const level = percentage == null ? 0 : Math.round(percentage);
+  const remainingWeight =
+    spool && Number.isFinite(spool.remainingWeight)
+      ? Math.max(0, Math.round(spool.remainingWeight))
+      : null;
 
   return (
     <div
@@ -40,15 +44,17 @@ function SpoolMeter({ spool }: { spool: DashboardSpool | null }) {
             : `conic-gradient(var(--primary) ${level}%, var(--muted) 0)`,
       }}
       aria-label={
-        percentage == null
-          ? "Remaining amount unknown"
-          : `${level} percent remaining`
+        remainingWeight == null
+          ? "Remaining weight unknown"
+          : percentage == null
+            ? `${remainingWeight} grams remaining`
+            : `${remainingWeight} grams remaining, ${level} percent of the spool`
       }
       role="img"
     >
-      <span className="absolute inset-[17px] rounded-full border-[5px] border-card bg-muted shadow-[0_0_0_1px_var(--border)]" />
-      <span className="relative text-xs font-bold">
-        {percentage == null ? "?" : `${level}%`}
+      <span className="absolute inset-[15px] rounded-full border-4 border-card bg-muted shadow-[0_0_0_1px_var(--border)]" />
+      <span className="relative whitespace-nowrap text-[0.8125rem] font-bold tracking-tight tabular-nums">
+        {remainingWeight == null ? "?" : `${remainingWeight} g`}
       </span>
     </div>
   );
@@ -66,6 +72,7 @@ function TrayCard({
   const needsMapping = tray.occupied === true && !tray.spool;
   const isEmpty = tray.occupied === false;
   const displayName = tray.printerName || tray.spool?.name;
+  const filamentColor = tray.printerColorHex || tray.spool?.colorHex;
   const canManageRfid = Boolean(tray.rfidTag && tray.spool);
   return (
     <article
@@ -101,15 +108,14 @@ function TrayCard({
       </div>
 
       <div className={cn("flex-1 px-4", isEmpty && "max-sm:py-3")}>
-        <p className="flex items-center gap-2 text-[0.95rem] font-semibold leading-5">
-          {(tray.printerColorHex || tray.spool?.colorHex) && (
+        <p className="flex items-center gap-2.5 text-[0.95rem] font-semibold leading-5">
+          {filamentColor && (
             <span
-              className="size-3 shrink-0 rounded-full border-2 border-card shadow-[0_0_0_1px_var(--border)]"
-              style={{
-                backgroundColor:
-                  tray.printerColorHex || tray.spool?.colorHex || undefined,
-              }}
-              aria-hidden="true"
+              className="h-6 w-9 shrink-0 rounded-md border border-black/20 shadow-[inset_0_0_0_1px_rgb(255_255_255_/_0.18),0_0_0_1px_var(--border)]"
+              style={{ backgroundColor: filamentColor }}
+              role="img"
+              aria-label={`Filament color ${filamentColor}`}
+              title={`Filament color ${filamentColor}`}
             />
           )}
           {displayName || (isEmpty ? "No spool detected" : "Filament unknown")}
@@ -135,7 +141,7 @@ function TrayCard({
             </span>
             <span className="mt-0.5 block truncate text-xs font-semibold">
               {tray.spool
-                ? `#${tray.spool.id} · ${tray.spool.name} · ${tray.spool.remainingWeight.toFixed(0)} g`
+                ? `#${tray.spool.id} · ${tray.spool.name}`
                 : "No spool assigned"}
             </span>
           </span>
