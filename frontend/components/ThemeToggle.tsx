@@ -50,7 +50,7 @@ export function ThemeToggle() {
       type="button"
       variant="outline"
       size="icon"
-      className="bg-background/95 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/80"
+      className="size-11 bg-background/95 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:size-9"
       onClick={toggleTheme}
       aria-label="Toggle light and dark theme"
       title="Toggle light and dark theme"

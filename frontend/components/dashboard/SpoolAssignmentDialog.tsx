@@ -170,6 +170,7 @@ export function SpoolAssignmentDialog({
               type="button"
               variant="ghost"
               size="icon"
+              className="size-11 sm:size-9"
               aria-label="Close assignment dialog"
               onClick={onClose}
             >
@@ -234,15 +235,15 @@ export function SpoolAssignmentDialog({
                     type="search"
                     value={searchQuery}
                     onChange={(event) => setSearchQuery(event.target.value)}
-                    placeholder="Search ID, name, vendor, material, or color"
-                    autoFocus
-                    className="h-10 w-full rounded-md border bg-background pl-9 pr-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                    placeholder="Search spools"
+                    className="h-11 w-full rounded-md border bg-background pl-9 pr-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 sm:h-10"
                   />
                 </label>
                 {cameraAvailable && (
                   <Button
                     type="button"
                     variant="outline"
+                    className="h-11 sm:h-9"
                     onClick={() => {
                       scanHandledRef.current = false;
                       setQrScanError(null);
@@ -277,7 +278,7 @@ export function SpoolAssignmentDialog({
                       <label
                         key={spool.id}
                         className={cn(
-                          "grid grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-3 rounded-xl border p-3 transition-colors",
+                          "grid grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-3 rounded-xl border p-3 transition-colors sm:grid-cols-[auto_auto_minmax(0,1fr)_auto]",
                           unavailable
                             ? "cursor-not-allowed opacity-55"
                             : "cursor-pointer hover:border-primary/55 hover:bg-accent/50",
@@ -318,11 +319,11 @@ export function SpoolAssignmentDialog({
                             )}
                           </span>
                         </span>
-                        <span className="text-right text-xs text-muted-foreground">
-                          <strong className="block text-sm text-foreground">
+                        <span className="col-start-3 text-left text-xs text-muted-foreground sm:col-start-auto sm:text-right">
+                          <strong className="text-sm text-foreground sm:block">
                             {spool.remainingWeight.toFixed(0)} g
                           </strong>
-                          remaining
+                          <span className="ml-1 sm:ml-0">remaining</span>
                         </span>
                       </label>
                     );
@@ -334,12 +335,18 @@ export function SpoolAssignmentDialog({
         </div>
 
         {!qrScanning && (
-          <div className="flex justify-end gap-2 border-t bg-muted/35 px-5 py-4 sm:px-6">
-            <Button type="button" variant="outline" onClick={onClose}>
+          <div className="flex shrink-0 justify-end gap-2 border-t bg-muted/35 px-5 py-4 sm:px-6">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 sm:h-9"
+              onClick={onClose}
+            >
               Cancel
             </Button>
             <Button
               type="button"
+              className="h-11 sm:h-9"
               onClick={saveAssignment}
               disabled={
                 isPending || !selectedSpool || selectedSpool === currentSpoolId

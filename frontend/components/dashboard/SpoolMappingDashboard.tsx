@@ -179,7 +179,7 @@ function TrayCard({
       {tray.locked ? (
         <Button
           variant="outline"
-          className="mx-4 mb-4 mt-4"
+          className="mx-4 mb-4 mt-4 h-11 sm:h-9"
           disabled={!canManageRfid}
           onClick={() => onRfidDetails(tray)}
         >
@@ -188,7 +188,7 @@ function TrayCard({
       ) : (
         <Button
           variant={needsMapping ? "default" : "outline"}
-          className="mx-4 mb-4 mt-4"
+          className="mx-4 mb-4 mt-4 h-11 sm:h-9"
           onClick={() => onAssign(tray)}
         >
           {tray.spool ? "Change mapping" : "Assign spool"}
@@ -324,6 +324,7 @@ export function SpoolMappingDashboard({
             <Button
               type="button"
               variant="outline"
+              className="h-11 sm:h-9"
               onClick={() => setAssignmentTarget(externalTarget)}
             >
               {externalSpool ? "Change mapping" : "Assign spool"}
