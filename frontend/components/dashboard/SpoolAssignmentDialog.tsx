@@ -12,10 +12,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button, ButtonLoading } from "@/components/ui/button";
 import type { DashboardSpool, DashboardTray } from "@/lib/dashboard";
 import { useCameraAvailable } from "@/lib/hooks/useCameraAvailable";
+import { getSpoolIdFromQrValue } from "@/lib/qr";
 import { cn } from "@/lib/utils";
-
-const URL_REGEX = /https?:\/\/.*\/(\d+)/i;
-const SPOOL_ID_REGEX = /web\+spoolman:s-(\d+)/i;
 
 export type AssignmentTarget = Pick<
   DashboardTray,
@@ -37,14 +35,6 @@ type Props = {
   onClose: () => void;
 };
 
-function getScannedSpoolId(result: IDetectedBarcode): number | null {
-  const urlMatch = result.rawValue.match(URL_REGEX);
-  if (urlMatch) return Number(urlMatch[1]);
-
-  const spoolIdMatch = result.rawValue.match(SPOOL_ID_REGEX);
-  return spoolIdMatch ? Number(spoolIdMatch[1]) : null;
-}
-
 export function SpoolAssignmentDialog({
   target,
   spools,
@@ -52,6 +42,7 @@ export function SpoolAssignmentDialog({
   onClose,
 }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const scanHandledRef = useRef(false);
   const [selectedSpool, setSelectedSpool] = useState(
     target.spool?.id.toString() ?? "",
   );
@@ -118,23 +109,25 @@ export function SpoolAssignmentDialog({
       return;
     }
 
-    const spoolId = getScannedSpoolId(results[0]);
+    const spoolId = getSpoolIdFromQrValue(results[0].rawValue);
     if (!spoolId || !spools.some((spool) => spool.id === spoolId)) {
       setQrScanError("That QR code does not identify an available spool.");
       return;
     }
 
+    if (scanHandledRef.current) return;
+    scanHandledRef.current = true;
+
     setSelectedSpool(spoolId.toString());
     setQrScanning(false);
     setQrScanError(null);
+    assignSpool(spoolId);
   }
 
-  function saveAssignment() {
+  function assignSpool(spoolId: number) {
+    setActionState({ error: null });
     startTransition(async () => {
-      const result = await updateTrayAssignment(
-        targetId,
-        Number(selectedSpool),
-      );
+      const result = await updateTrayAssignment(targetId, spoolId);
       setActionState(result);
       if (!result.error) {
         dialogRef.current?.close();
@@ -142,6 +135,10 @@ export function SpoolAssignmentDialog({
         router.refresh();
       }
     });
+  }
+
+  function saveAssignment() {
+    assignSpool(Number(selectedSpool));
   }
 
   return (
@@ -247,7 +244,9 @@ export function SpoolAssignmentDialog({
                     type="button"
                     variant="outline"
                     onClick={() => {
+                      scanHandledRef.current = false;
                       setQrScanError(null);
+                      setActionState({ error: null });
                       setQrScanning(true);
                     }}
                   >

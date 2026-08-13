@@ -3,9 +3,16 @@
 import { type IDetectedBarcode, Scanner } from "@yudiel/react-qr-scanner";
 import { AlertCircle, SearchIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useActionState, useMemo, useState } from "react";
+import {
+  useActionState,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import { useCameraAvailable } from "@/lib/hooks/useCameraAvailable";
 import type { Spool } from "@/lib/proto/bambu_spoolman/grpc/spoolman";
+import { getSpoolIdFromQrValue } from "@/lib/qr";
 import { Alert } from "../ui/alert";
 import { Button, ButtonLoading } from "../ui/button";
 import {
@@ -18,9 +25,6 @@ import {
   updateTrayAssignment,
 } from "./actions";
 import { SpoolRadioGroup } from "./SpoolRadioGroup";
-
-const URL_REGEX = /https?:\/\/.*\/(\d+)/i;
-const SPOOL_ID_REGEX = /web\+spoolman:s-(\d+)/i;
 
 type Props = {
   trayId: number;
@@ -59,6 +63,8 @@ export function TrayConfigForm(props: Props) {
   const [qrScanning, setQrScanning] = useState(false);
   const [qrScanError, setQrScanError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const scanHandledRef = useRef(false);
+  const [isQrPending, startQrTransition] = useTransition();
   const cameraAvailable = useCameraAvailable();
   const router = useRouter();
 
@@ -80,18 +86,6 @@ export function TrayConfigForm(props: Props) {
     },
   );
 
-  const getSpoolId = (result: IDetectedBarcode) => {
-    const urlMatch = result.rawValue.match(URL_REGEX);
-    if (urlMatch) {
-      return Number(urlMatch[1]);
-    }
-    const spoolIdMatch = result.rawValue.match(SPOOL_ID_REGEX);
-    if (spoolIdMatch) {
-      return Number(spoolIdMatch[1]);
-    }
-    return null;
-  };
-
   const handleScan = (result: IDetectedBarcode[]) => {
     if (result.length === 0) {
       setQrScanError("No QR code detected. Please try again.");
@@ -103,15 +97,33 @@ export function TrayConfigForm(props: Props) {
       );
       return;
     }
-    const spoolId = getSpoolId(result[0]);
-    if (!spoolId) {
-      setQrScanError("Invalid QR code format.");
+    const spoolId = getSpoolIdFromQrValue(result[0].rawValue);
+    if (!spoolId || !props.allSpools.some((spool) => spool.id === spoolId)) {
+      setQrScanError("That QR code does not identify an available spool.");
       return;
     }
+
+    if (scanHandledRef.current) return;
+    scanHandledRef.current = true;
+
     setSelectedSpool(spoolId.toString());
     setChanged(true);
     setQrScanning(false);
+    setQrScanError(null);
+
+    startQrTransition(async () => {
+      const assignment = await updateTrayAssignment(props.trayId, spoolId);
+      if (assignment.error) {
+        setQrScanError(assignment.error);
+        return;
+      }
+
+      setChanged(false);
+      router.refresh();
+    });
   };
+
+  const updating = isPending || isQrPending;
 
   const filteredSpools = useMemo(() => {
     const terms = searchQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -155,6 +167,7 @@ export function TrayConfigForm(props: Props) {
             <Button
               className="w-full mb-2"
               onClick={() => {
+                scanHandledRef.current = false;
                 setQrScanError(null);
                 setQrScanning(true);
               }}
@@ -187,7 +200,7 @@ export function TrayConfigForm(props: Props) {
                 setSelectedSpool(e);
                 setChanged(true);
               }}
-              disabled={isPending}
+              disabled={updating}
               selected={props.selectedSpools}
               initialSpool={props.spool}
             />
@@ -195,9 +208,9 @@ export function TrayConfigForm(props: Props) {
               variant="default"
               className="mt-4 float-right"
               type="submit"
-              disabled={isPending || !changed}
+              disabled={updating || !changed}
             >
-              <ButtonLoading loading={isPending} />
+              <ButtonLoading loading={updating} />
               Update
             </Button>
           </form>
