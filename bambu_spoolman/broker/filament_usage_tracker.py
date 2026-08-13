@@ -26,6 +26,7 @@ class FilamentUsageTracker:
         self.active_model = None
         self.ams_mapping = None
         self.spent_layers = set()
+        self.spent_filaments = {}
         self.using_ams = False
 
         self.gcode_state = None
@@ -85,6 +86,7 @@ class FilamentUsageTracker:
         model_url = print_obj.get("url")
 
         self.spent_layers = set()
+        self.spent_filaments = {}
 
         model = self._retrieve_model(model_url)
         if model is None:
@@ -114,6 +116,7 @@ class FilamentUsageTracker:
             model_path=model,
             current_layer=0,
             spent_layers=self.spent_layers,
+            spent_filaments=self.spent_filaments,
             task_id=print_obj.get("task_id"),
             subtask_id=print_obj.get("subtask_id"),
             ams_mapping=self.ams_mapping,
@@ -179,7 +182,14 @@ class FilamentUsageTracker:
 
             if spent:
                 self.spent_layers.add(layer_to_spend)
-        update_layer(layer, set(self.spent_layers))
+        update_layer(
+            layer,
+            set(self.spent_layers),
+            {
+                spent_layer: set(filaments)
+                for spent_layer, filaments in self.spent_filaments.items()
+            },
+        )
 
     def _handle_print_end(self):
         logger.info("Print ended!")
@@ -194,6 +204,7 @@ class FilamentUsageTracker:
 
         self.active_model = None
         self.ams_mapping = None
+        self.spent_filaments = {}
         self.using_ams = False
         self.current_layer = None
 
@@ -204,6 +215,7 @@ class FilamentUsageTracker:
 
         self.active_model = None
         self.ams_mapping = None
+        self.spent_filaments = {}
         self.using_ams = False
         self.current_layer = None
 
@@ -222,8 +234,17 @@ class FilamentUsageTracker:
         config = load_settings()
 
         trays = config.get("trays", {})
+        spent_filaments = self.spent_filaments.setdefault(int(layer), set())
 
         for filament, usage in layer_usage.items():
+            if filament in spent_filaments:
+                logger.debug(
+                    "Skipping filament {} for layer {} because it is already spent",
+                    filament,
+                    layer,
+                )
+                continue
+
             logger.debug("Spending {}mm of filament {}", usage, filament)
 
             # Use the external spool ID if we're not using an AMS
@@ -247,8 +268,9 @@ class FilamentUsageTracker:
 
             # Spend the filament
             self.spoolman_client.consume_spool(spoolman_spool, length=usage)
+            spent_filaments.add(filament)
 
-        return True
+        return spent_filaments.issuperset(layer_usage)
 
     def _download_model(self, model_url):
         logger.debug("Downloading model from URL: {}", model_url)
@@ -309,6 +331,7 @@ class FilamentUsageTracker:
             gcode_file_name,
             current_layer,
             spent_layers,
+            spent_filaments,
             ams_mapping,
             using_ams,
         ) = result
@@ -318,6 +341,9 @@ class FilamentUsageTracker:
         if not self._load_model(model_path, gcode_file_name):
             return
         self.spent_layers = set(spent_layers)
+        self.spent_filaments = {
+            layer: set(filaments) for layer, filaments in spent_filaments.items()
+        }
         self.ams_mapping = ams_mapping
         self.current_layer = current_layer
         self.using_ams = using_ams

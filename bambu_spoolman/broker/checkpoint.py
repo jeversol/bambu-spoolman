@@ -33,6 +33,7 @@ def save_checkpoint(
     model_path,
     current_layer,
     spent_layers,
+    spent_filaments,
     task_id,
     subtask_id,
     ams_mapping,
@@ -46,6 +47,10 @@ def save_checkpoint(
     existing_metadata["subtask_id"] = subtask_id
     existing_metadata["current_layer"] = current_layer
     existing_metadata["spent_layers"] = sorted(spent_layers)
+    existing_metadata["spent_filaments"] = {
+        str(layer): sorted(filaments)
+        for layer, filaments in spent_filaments.items()
+    }
     existing_metadata["ams_mapping"] = ams_mapping
     existing_metadata["gcode_file_name"] = gcode_file_name
     existing_metadata["using_ams"] = using_ams
@@ -58,10 +63,14 @@ def clear():
         shutil.rmtree(checkpoint_directory())
 
 
-def update_layer(layer, spent_layers):
+def update_layer(layer, spent_layers, spent_filaments):
     metadata = get_checkpoint_metadata()
     metadata["current_layer"] = layer
     metadata["spent_layers"] = sorted(spent_layers)
+    metadata["spent_filaments"] = {
+        str(spent_layer): sorted(filaments)
+        for spent_layer, filaments in spent_filaments.items()
+    }
     _save_checkpoint_metadata(metadata)
 
 
@@ -105,6 +114,10 @@ def recover_model(task_id, subtask_id):
 
     current_layer = metadata.get("current_layer")
     spent_layers = metadata.get("spent_layers")
+    spent_filaments = {
+        int(layer): filaments
+        for layer, filaments in metadata.get("spent_filaments", {}).items()
+    }
     ams_mapping = metadata.get("ams_mapping")
     gcode_file_name = metadata.get("gcode_file_name")
     using_ams = metadata.get("using_ams")
@@ -128,6 +141,7 @@ def recover_model(task_id, subtask_id):
         gcode_file_name,
         current_layer,
         spent_layers,
+        spent_filaments,
         ams_mapping,
         using_ams,
     )

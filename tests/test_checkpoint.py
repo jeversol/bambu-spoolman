@@ -28,11 +28,15 @@ class CheckpointRecoveryTests(unittest.TestCase):
         task_id="task-1",
         subtask_id="subtask-1",
         spent_layers=(0, 1, 3),
+        spent_filaments=None,
     ):
+        if spent_filaments is None:
+            spent_filaments = {0: (0,), 1: (0, 1)}
         save_checkpoint(
             model_path=self.model_path,
             current_layer=12,
             spent_layers=spent_layers,
+            spent_filaments=spent_filaments,
             task_id=task_id,
             subtask_id=subtask_id,
             ams_mapping=[0, -1, -1, -1],
@@ -67,6 +71,13 @@ class CheckpointRecoveryTests(unittest.TestCase):
         result = recover_model("task-1", "subtask-1")
 
         self.assertEqual(result[3], [0, 2, 5])
+
+    def test_recovers_exact_spent_filaments(self):
+        self.save_checkpoint(spent_filaments={2: (0,), 5: (0, 1)})
+
+        result = recover_model("task-1", "subtask-1")
+
+        self.assertEqual(result[4], {2: [0], 5: [0, 1]})
 
     def test_recovers_legacy_checkpoint_from_current_layer(self):
         self.save_checkpoint()
