@@ -21,6 +21,7 @@ Set the following environment variables:
 
 * `SPOOLMAN_URL` -- The base URL for your spoolman instance (i.e. `http://localhost:7912`)
   * `SPOOLMAN_VERIFY` -- Set to `false` to disable SSL verification for spoolman requests (Useful for self-signed certificates)
+* `BAMBU_SPOOLMAN_HTTP_TIMEOUT` -- Timeout in seconds for Spoolman and printer file HTTP requests (default: `30`)
 * `PRINTER_IP` -- The IP address of your printer
 * `PRINTER_SERIAL` -- The serial number of your printer
 * `PRINTER_ACCESS_CODE` -- The access code for your printer

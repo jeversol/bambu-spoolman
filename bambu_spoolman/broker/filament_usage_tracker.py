@@ -16,7 +16,11 @@ from bambu_spoolman.broker.checkpoint import (
 )
 from bambu_spoolman.gcode.bambu import open_gcode
 from bambu_spoolman.gcode.parser import evaluate_gcode
-from bambu_spoolman.settings import EXTERNAL_SPOOL_ID, load_settings
+from bambu_spoolman.settings import (
+    EXTERNAL_SPOOL_ID,
+    get_http_timeout,
+    load_settings,
+)
 from bambu_spoolman.spoolman import new_client
 
 
@@ -295,7 +299,7 @@ class FilamentUsageTracker:
 
         with tempfile.NamedTemporaryFile(suffix=".3mf", delete=False) as model_file:
             temp_file_name = model_file.name
-            response = requests.get(model_url)
+            response = requests.get(model_url, timeout=get_http_timeout())
 
             if response.status_code != 200:
                 logger.error("Failed to download model: {}", response.status_code)

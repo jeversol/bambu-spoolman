@@ -1,3 +1,4 @@
+import os
 import unittest
 from unittest.mock import Mock, patch
 
@@ -17,6 +18,23 @@ class SpoolmanClientTests(unittest.TestCase):
 
         with self.assertRaises(requests.HTTPError):
             client.consume_spool(42, length=10)
+
+    @patch("bambu_spoolman.spoolman.requests.put")
+    def test_consume_spool_uses_configured_timeout(self, put):
+        put.return_value = Mock()
+        with patch.dict(
+            os.environ, {"BAMBU_SPOOLMAN_HTTP_TIMEOUT": "12.5"}
+        ):
+            client = SpoolmanClient("http://spoolman.test")
+
+        client.consume_spool(42, length=10)
+
+        put.assert_called_once_with(
+            "http://spoolman.test/api/v1/spool/42/use",
+            json={"use_length": 10, "use_weight": None},
+            verify=True,
+            timeout=12.5,
+        )
 
 
 if __name__ == "__main__":

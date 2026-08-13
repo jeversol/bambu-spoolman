@@ -5,6 +5,8 @@ import requests
 import urllib3
 from loguru import logger
 
+from bambu_spoolman.settings import get_http_timeout
+
 
 class SpoolmanClient:
     """
@@ -14,6 +16,7 @@ class SpoolmanClient:
     def __init__(self, endpoint):
         self.endpoint = endpoint
         self.verify = os.environ.get("SPOOLMAN_VERIFY", "true").lower() == "true"
+        self.timeout = get_http_timeout()
         self._external_filaments_cache = None
         self._external_filaments_cache_time = None
         self.ams_field_name = os.environ.get("SPOOLMAN_AMS_FIELD_NAME")
@@ -26,28 +29,44 @@ class SpoolmanClient:
         """
         Validates the connection to the Spoolman API
         """
-        response = requests.get(self._make_api_route("health"), verify=self.verify)
+        response = requests.get(
+            self._make_api_route("health"),
+            verify=self.verify,
+            timeout=self.timeout,
+        )
         return response.status_code == 200
 
     def get_info(self):
         """
         Get information about the Spoolman instance
         """
-        response = requests.get(self._make_api_route("info"), verify=self.verify)
+        response = requests.get(
+            self._make_api_route("info"),
+            verify=self.verify,
+            timeout=self.timeout,
+        )
         return response.json()
 
     def get_filaments(self):
         """
         Get a list of all filaments
         """
-        response = requests.get(self._make_api_route("filament"), verify=self.verify)
+        response = requests.get(
+            self._make_api_route("filament"),
+            verify=self.verify,
+            timeout=self.timeout,
+        )
         return response.json()
 
     def get_spools(self):
         """
         Get a list of all spools
         """
-        response = requests.get(self._make_api_route("spool"), verify=self.verify)
+        response = requests.get(
+            self._make_api_route("spool"),
+            verify=self.verify,
+            timeout=self.timeout,
+        )
         return response.json()
 
     def get_external_filaments(self, use_cache=True):
@@ -71,6 +90,7 @@ class SpoolmanClient:
             response = requests.get(
                 self._make_api_route("external/filament"),
                 verify=self.verify,
+                timeout=self.timeout,
             )
             response.raise_for_status()
 
@@ -92,7 +112,9 @@ class SpoolmanClient:
         """
         try:
             response = requests.get(
-                self._make_api_route(f"spool/{spool_id}"), verify=self.verify
+                self._make_api_route(f"spool/{spool_id}"),
+                verify=self.verify,
+                timeout=self.timeout,
             )
             response.raise_for_status()
             return response.json()
@@ -113,6 +135,7 @@ class SpoolmanClient:
                 "use_weight": weight,
             },
             verify=self.verify,
+            timeout=self.timeout,
         )
         response.raise_for_status()
         return response.json()
@@ -154,6 +177,7 @@ class SpoolmanClient:
                 self._make_api_route(f"spool/{spool_id}"),
                 json={"extra": extra},
                 verify=self.verify,
+                timeout=self.timeout,
             )
             response.raise_for_status()
             return True
@@ -213,6 +237,7 @@ class SpoolmanClient:
                 self._make_api_route(f"spool/{spool_id}"),
                 json={"extra": extra},
                 verify=self.verify,
+                timeout=self.timeout,
             )
             response.raise_for_status()
             logger.debug(
@@ -248,6 +273,7 @@ class SpoolmanClient:
                 self._make_api_route("spool"),
                 json=spool_data,
                 verify=self.verify,
+                timeout=self.timeout,
             )
 
             response.raise_for_status()
@@ -421,6 +447,7 @@ class SpoolmanClient:
                 self._make_api_route("filament"),
                 json=filament_data,
                 verify=self.verify,
+                timeout=self.timeout,
             )
             response.raise_for_status()
 
@@ -487,7 +514,11 @@ class SpoolmanClient:
         """
         try:
             # Try to find existing vendor
-            response = requests.get(self._make_api_route("vendor"), verify=self.verify)
+            response = requests.get(
+                self._make_api_route("vendor"),
+                verify=self.verify,
+                timeout=self.timeout,
+            )
             response.raise_for_status()
             vendors = response.json()
             for vendor in vendors:
@@ -503,6 +534,7 @@ class SpoolmanClient:
                 self._make_api_route("vendor"),
                 json=vendor_data,
                 verify=self.verify,
+                timeout=self.timeout,
             )
             response.raise_for_status()
 

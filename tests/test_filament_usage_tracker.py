@@ -1,3 +1,4 @@
+import os
 import unittest
 from unittest.mock import Mock, call, patch
 
@@ -203,6 +204,19 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
         self.assertEqual(self.tracker.spent_layers, {0, 2, 5})
         self.assertEqual(self.tracker.spent_filaments, {5: {0, 1}})
         self.assertEqual(self.tracker.current_layer, 5)
+
+    @patch("bambu_spoolman.broker.filament_usage_tracker.requests.get")
+    def test_model_download_uses_configured_timeout(self, get):
+        get.return_value.status_code = 200
+        get.return_value.content = b"model"
+
+        with patch.dict(
+            os.environ, {"BAMBU_SPOOLMAN_HTTP_TIMEOUT": "12.5"}
+        ):
+            model_path = self.tracker._download_model("http://printer/model.3mf")
+
+        self.addCleanup(os.remove, model_path)
+        get.assert_called_once_with("http://printer/model.3mf", timeout=12.5)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,13 @@ import json
 import os
 
 EXTERNAL_SPOOL_ID = 255
+DEFAULT_HTTP_TIMEOUT = 30.0
+
+
+def get_http_timeout():
+    return float(
+        os.environ.get("BAMBU_SPOOLMAN_HTTP_TIMEOUT", DEFAULT_HTTP_TIMEOUT)
+    )
 
 
 def get_configuration_path(path):
