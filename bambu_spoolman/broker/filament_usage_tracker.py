@@ -167,6 +167,7 @@ class FilamentUsageTracker:
             logger.debug("Spending layers: {}", to_spend)
             for i in to_spend:
                 self._spend_filament_for_layer(i)
+            self.spent_layers.update(to_spend)
         update_layer(layer)
 
     def _handle_print_end(self):
