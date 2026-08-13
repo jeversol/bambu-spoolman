@@ -4,6 +4,8 @@ import unittest
 import zipfile
 from unittest.mock import Mock, call, patch
 
+import requests
+
 from bambu_spoolman.broker.filament_usage_tracker import FilamentUsageTracker
 
 
@@ -209,8 +211,7 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
 
     @patch("bambu_spoolman.broker.filament_usage_tracker.requests.get")
     def test_model_download_uses_configured_timeout(self, get):
-        get.return_value.status_code = 200
-        get.return_value.content = b"model"
+        get.return_value.iter_content.return_value = [b"model"]
 
         with patch.dict(
             os.environ, {"BAMBU_SPOOLMAN_HTTP_TIMEOUT": "12.5"}
@@ -218,7 +219,49 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
             model_path = self.tracker._download_model("http://printer/model.3mf")
 
         self.addCleanup(os.remove, model_path)
-        get.assert_called_once_with("http://printer/model.3mf", timeout=12.5)
+        get.assert_called_once_with(
+            "http://printer/model.3mf", timeout=12.5, stream=True
+        )
+
+    @patch("bambu_spoolman.broker.filament_usage_tracker.requests.get")
+    def test_model_download_writes_streamed_chunks(self, get):
+        get.return_value.iter_content.return_value = [b"first", b"", b"second"]
+
+        model_path = self.tracker._download_model("http://printer/model.3mf")
+
+        self.addCleanup(os.remove, model_path)
+        with open(model_path, "rb") as model_file:
+            self.assertEqual(model_file.read(), b"firstsecond")
+        get.return_value.raise_for_status.assert_called_once_with()
+        get.return_value.iter_content.assert_called_once_with(chunk_size=64 * 1024)
+        get.return_value.close.assert_called_once_with()
+
+    @patch("bambu_spoolman.broker.filament_usage_tracker.requests.get")
+    def test_model_download_removes_partial_file_after_stream_error(self, get):
+        created_files = []
+        real_named_temporary_file = tempfile.NamedTemporaryFile
+
+        def track_temporary_file(*args, **kwargs):
+            temporary_file = real_named_temporary_file(*args, **kwargs)
+            created_files.append(temporary_file.name)
+            return temporary_file
+
+        get.return_value.iter_content.side_effect = (
+            requests.exceptions.ChunkedEncodingError("connection interrupted")
+        )
+
+        with patch(
+            "bambu_spoolman.broker.filament_usage_tracker.tempfile.NamedTemporaryFile",
+            side_effect=track_temporary_file,
+        ):
+            model_path = self.tracker._download_model(
+                "http://printer/model.3mf"
+            )
+
+        self.assertIsNone(model_path)
+        self.assertEqual(len(created_files), 1)
+        self.assertFalse(os.path.exists(created_files[0]))
+        get.return_value.close.assert_called_once_with()
 
     def test_load_model_rejects_invalid_utf8_gcode(self):
         archive_file = tempfile.NamedTemporaryFile(suffix=".3mf", delete=False)

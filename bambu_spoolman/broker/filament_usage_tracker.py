@@ -24,6 +24,8 @@ from bambu_spoolman.settings import (
 )
 from bambu_spoolman.spoolman import new_client
 
+MODEL_DOWNLOAD_CHUNK_SIZE = 64 * 1024
+
 
 class FilamentUsageTracker:
     def __init__(self):
@@ -298,17 +300,39 @@ class FilamentUsageTracker:
     def _download_model(self, model_url):
         logger.debug("Downloading model from URL: {}", model_url)
 
-        with tempfile.NamedTemporaryFile(suffix=".3mf", delete=False) as model_file:
-            temp_file_name = model_file.name
-            response = requests.get(model_url, timeout=get_http_timeout())
+        temp_file_name = None
+        response = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                suffix=".3mf", delete=False
+            ) as model_file:
+                temp_file_name = model_file.name
+                response = requests.get(
+                    model_url,
+                    timeout=get_http_timeout(),
+                    stream=True,
+                )
+                response.raise_for_status()
 
-            if response.status_code != 200:
-                logger.error("Failed to download model: {}", response.status_code)
-                return
-            model_file.write(response.content)
+                for chunk in response.iter_content(
+                    chunk_size=MODEL_DOWNLOAD_CHUNK_SIZE
+                ):
+                    if chunk:
+                        model_file.write(chunk)
+        except Exception as e:
+            logger.error("Failed to download model: {}", e)
+            if temp_file_name is not None:
+                try:
+                    os.remove(temp_file_name)
+                except FileNotFoundError:
+                    pass
+            return None
+        finally:
+            if response is not None:
+                response.close()
 
-            logger.debug("Model downloaded to {}", temp_file_name)
-            return temp_file_name
+        logger.debug("Model downloaded to {}", temp_file_name)
+        return temp_file_name
 
     def _retrieve_model_from_ftp(self, model_path):
         logger.debug("Retrieving model from FTP path: {}", model_path)
