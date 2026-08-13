@@ -155,7 +155,11 @@ class FilamentUsageTracker:
 
         last_layer = self.current_layer
 
-        if last_layer:
+        if last_layer is None:
+            # This is the first reported layer. Spend it immediately; layer 0 is
+            # otherwise falsy and would never be consumed.
+            self._spend_filament_for_layer(layer)
+        else:
             # Spend layers between the last layer and the current layer
             logger.debug("Last layer: {}", last_layer)
             logger.debug("Current layer: {}", layer)
