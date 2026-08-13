@@ -3,7 +3,7 @@ name: Publish Docker image
 on:
   push:
     branches:
-      - main
+      - personal
 
 env:
   REGISTRY: ghcr.io
@@ -42,4 +42,4 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           platforms: linux/amd64,linux/arm64
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:personal
