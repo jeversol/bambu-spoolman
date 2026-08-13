@@ -114,6 +114,7 @@ class SpoolmanClient:
             },
             verify=self.verify,
         )
+        response.raise_for_status()
         return response.json()
 
     def lookup_by_tray_uuid(self, tray_uuid):

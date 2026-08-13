@@ -145,29 +145,37 @@ class FilamentUsageTracker:
         if self.active_model is None:
             logger.debug("Skipping layer change because no model is loaded")
             return
-        if layer in self.spent_layers:
-            logger.debug(
-                "Skipping layer change because layer {} is already spent", layer
-            )
-            return  # Already spent this layer. Probably a full report
-
-        self.spent_layers.add(layer)
-
         last_layer = self.current_layer
 
         if last_layer is None:
             # This is the first reported layer. Spend it immediately; layer 0 is
             # otherwise falsy and would never be consumed.
-            self._spend_filament_for_layer(layer)
+            to_spend = {layer}
         else:
             # Spend layers between the last layer and the current layer
             logger.debug("Last layer: {}", last_layer)
             logger.debug("Current layer: {}", layer)
             to_spend = set(range(last_layer + 1, layer + 1))
-            logger.debug("Spending layers: {}", to_spend)
-            for i in to_spend:
-                self._spend_filament_for_layer(i)
-            self.spent_layers.update(to_spend)
+
+        # Include earlier failed layers so each new status update retries them.
+        to_spend.update(
+            model_layer
+            for model_layer in self.active_model
+            if model_layer <= layer and model_layer not in self.spent_layers
+        )
+        logger.debug("Spending layers: {}", to_spend)
+
+        for layer_to_spend in sorted(to_spend):
+            try:
+                spent = self._spend_filament_for_layer(layer_to_spend)
+            except Exception as e:
+                logger.error(
+                    "Failed to spend filament for layer {}: {}", layer_to_spend, e
+                )
+                continue
+
+            if spent:
+                self.spent_layers.add(layer_to_spend)
         update_layer(layer)
 
     def _handle_print_end(self):
@@ -200,13 +208,13 @@ class FilamentUsageTracker:
 
     def _spend_filament_for_layer(self, layer):
         if self.active_model is None:
-            return
+            return False
         logger.debug("Spending filament for layer {}", layer)
 
         layer_usage = self.active_model.get(int(layer))
         if layer_usage is None:
             logger.error("Failed to find filament usage for layer {}", layer)
-            return
+            return False
 
         config = load_settings()
 
@@ -228,7 +236,7 @@ class FilamentUsageTracker:
             spoolman_spool = trays.get(str(real_mapping))
             if spoolman_spool is None:
                 logger.error("Failed to find tray for filament {}", filament)
-                continue
+                return False
 
             logger.debug(
                 "Spoolman spool for filament {} is {}", filament, spoolman_spool
@@ -236,6 +244,8 @@ class FilamentUsageTracker:
 
             # Spend the filament
             self.spoolman_client.consume_spool(spoolman_spool, length=usage)
+
+        return True
 
     def _download_model(self, model_url):
         logger.debug("Downloading model from URL: {}", model_url)
