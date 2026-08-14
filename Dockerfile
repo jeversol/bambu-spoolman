@@ -1,14 +1,18 @@
-FROM python:3.13-alpine AS base
+FROM ghcr.io/astral-sh/uv:0.12.4@sha256:d0a6eca6c669dc7e9c51218707b8438a3d30402733d739dcc00adb3e213e8f5c AS uv
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+FROM python:3.13-alpine@sha256:540c7d91f98ff6880174c40e99067bf5941eb54d818a7a5e094d188b196a934d AS python_base
 
 WORKDIR /app
 
-FROM base AS builder
+FROM python_base AS build_base
+
+COPY --from=uv /uv /uvx /bin/
+
+FROM build_base AS builder
 
 RUN apk add --no-cache gcc musl-dev bash
 
-RUN python -m venv /venv
+RUN python -m venv --without-pip /venv
 
 COPY . .
 
@@ -18,19 +22,33 @@ RUN scripts/update_protos.sh
 
 RUN uv export --locked --no-dev --no-emit-project \
     --format requirements-txt --output-file /tmp/requirements.txt \
-    && /venv/bin/pip install --require-hashes -r /tmp/requirements.txt \
+    && uv pip install --python /venv/bin/python \
+        --require-hashes -r /tmp/requirements.txt \
     && uv build \
-    && /venv/bin/pip install --no-deps dist/*.whl
+    && uv pip install --python /venv/bin/python --no-deps dist/*.whl
+
+FROM builder AS backend_verifier
+
+RUN .venv/bin/python -m unittest discover -s tests \
+    && .venv/bin/ruff check . \
+    && .venv/bin/ruff format --check . \
+    && uv export --locked --no-dev --no-emit-project \
+        --format requirements-txt --output-file /tmp/audit-requirements.txt \
+    && uvx pip-audit==2.10.1 --requirement /tmp/audit-requirements.txt \
+        --progress-spinner off \
+    && touch /tmp/backend-verified
 
 
-FROM node:23-alpine AS frontend_builder
+FROM node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS frontend_builder
 
 RUN apk add --no-cache protobuf protobuf-dev tree
 
 WORKDIR /app
 
 COPY frontend/package.json frontend/pnpm-lock.yaml /app/frontend/
-RUN cd /app/frontend && npm install -g pnpm@10 && pnpm install --frozen-lockfile
+RUN npm install --global pnpm@10.34.5 \
+    && cd /app/frontend \
+    && pnpm install --frozen-lockfile
 
 COPY frontend /app/frontend
 COPY proto /app/proto
@@ -38,14 +56,33 @@ COPY proto /app/proto
 
 RUN cd /app/frontend && pnpm proto-generate && pnpm build
 
-FROM base AS app
+FROM frontend_builder AS frontend_verifier
+
+RUN cd /app/frontend \
+    && pnpm audit --audit-level high \
+    && pnpm lint \
+    && touch /tmp/frontend-verified
+
+
+FROM scratch AS verify
+
+COPY --from=backend_verifier /tmp/backend-verified /
+COPY --from=frontend_verifier /tmp/frontend-verified /
+
+FROM python_base AS app
 
 ARG BAMBU_SPOOLMAN_VERSION=local
 ARG BAMBU_SPOOLMAN_BUILD_NUMBER=local
 ARG BAMBU_SPOOLMAN_REVISION=unknown
 ARG BAMBU_SPOOLMAN_BUILD_DATE=unknown
 
-RUN apk add --no-cache supervisor nodejs pnpm
+RUN apk add --no-cache nodejs tini \
+    && rm -rf \
+        /usr/local/lib/python3.13/site-packages/pip \
+        /usr/local/lib/python3.13/site-packages/pip-*.dist-info \
+        /usr/local/bin/pip \
+        /usr/local/bin/pip3 \
+        /usr/local/bin/pip3.13
 
 ENV LOGURU_LEVEL=INFO \
     BAMBU_SPOOLMAN_VERSION=${BAMBU_SPOOLMAN_VERSION} \
@@ -63,7 +100,9 @@ COPY --from=builder /venv /venv
 COPY --from=frontend_builder /app/frontend/public /app/frontend/public
 COPY --from=frontend_builder /app/frontend/.next/standalone /app/frontend
 COPY --from=frontend_builder /app/frontend/.next/static /app/frontend/.next/static
+COPY --from=backend_verifier /tmp/backend-verified /tmp/verification/backend
+COPY --from=frontend_verifier /tmp/frontend-verified /tmp/verification/frontend
 
-COPY conf/supervisord.conf /app/supervisord.conf
+COPY --chmod=755 scripts/container-entrypoint.sh /app/container-entrypoint.sh
 
-CMD ["supervisord", "-c", "/app/supervisord.conf"]
+ENTRYPOINT ["tini", "--", "/app/container-entrypoint.sh"]

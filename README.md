@@ -41,6 +41,18 @@ Container logs use searchable `event=... key=value` messages at `INFO` for MQTT 
 
 Each container logs its release/ref, CI build number, Git revision, and build timestamp in the `event=service_start` message. Locally built images use `version=local build_number=local` unless those Docker build arguments are supplied explicitly.
 
+## Dependency and image security
+
+Production builds use frozen Python and pnpm lockfiles, version-and-digest-pinned base images, and commit-pinned GitHub Actions. Before an image is published, the workflow runs backend tests and linting, builds and lints the frontend, audits both dependency graphs, smoke-tests the assembled container, and rejects high or critical findings in the final image. Multi-architecture releases verify both amd64 and arm64 before publishing. Published images include an immutable `sha-<commit>` tag, an SBOM, and provenance metadata.
+
+Dependabot proposes weekly npm, Python, Docker, and GitHub Actions updates against the `personal` branch. Routine patch and minor updates are grouped after a short cooldown; major updates remain separate for explicit review. A daily workflow rescans both the deployed lockfiles and the published `personal` image because newly disclosed vulnerabilities can affect an image that was clean when built.
+
+Run the current dependency audits locally with:
+
+```sh
+sh scripts/security-audit.sh
+```
+
 ## Untested things
 
 * External spools

@@ -1,4 +1,6 @@
 __pycache__/
+.git/
+.pnpm-store/
 
 frontend/node_modules
 frontend/.next
