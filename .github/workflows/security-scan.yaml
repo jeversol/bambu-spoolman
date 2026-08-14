@@ -21,7 +21,7 @@ jobs:
       - name: Checkout deployed branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: personal
+          ref: main
       - name: Audit deployed lockfiles
         run: sh scripts/security-audit.sh
       - name: Log in
@@ -31,11 +31,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Smoke-test published container
-        run: sh scripts/container-smoke-test.sh ghcr.io/${{ github.repository }}:personal
+        run: sh scripts/container-smoke-test.sh ghcr.io/${{ github.repository }}:main
       - name: Scan published image for known vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ghcr.io/${{ github.repository }}:personal
+          image-ref: ghcr.io/${{ github.repository }}:main
           scanners: vuln
           vuln-type: os,library
           severity: HIGH,CRITICAL

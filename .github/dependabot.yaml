@@ -3,7 +3,7 @@ version: 2
 updates:
   - package-ecosystem: npm
     directory: /frontend
-    target-branch: personal
+    target-branch: main
     schedule:
       interval: weekly
       day: monday
@@ -22,7 +22,7 @@ updates:
 
   - package-ecosystem: pip
     directory: /
-    target-branch: personal
+    target-branch: main
     schedule:
       interval: weekly
       day: monday
@@ -41,7 +41,7 @@ updates:
 
   - package-ecosystem: docker
     directory: /
-    target-branch: personal
+    target-branch: main
     schedule:
       interval: weekly
       day: monday
@@ -60,7 +60,7 @@ updates:
 
   - package-ecosystem: github-actions
     directory: /
-    target-branch: personal
+    target-branch: main
     schedule:
       interval: weekly
       day: monday
