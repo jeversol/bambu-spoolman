@@ -1,8 +1,18 @@
+import json
 import struct
 import unittest
 from unittest.mock import Mock, call, patch
 
-from bambu_spoolman.bambu_mqtt import MqttHandler
+from bambu_spoolman.bambu_mqtt import MqttHandler, recursive_merge
+
+
+class RecursiveMergeTests(unittest.TestCase):
+    def test_replaces_a_scalar_with_a_nested_delta(self):
+        existing = {"print": {"ams": 0}}
+
+        recursive_merge(existing, {"print": {"ams": {"ams": []}}})
+
+        self.assertEqual(existing, {"print": {"ams": {"ams": []}}})
 
 
 class MqttHandlerRecoveryTests(unittest.TestCase):
@@ -49,6 +59,39 @@ class MqttHandlerRecoveryTests(unittest.TestCase):
             "printer.test", 8883, keepalive=5
         )
         sleep.assert_called_once_with(1)
+
+    @patch.object(MqttHandler, "_create_client")
+    def test_mqtt_callback_queues_work_off_the_network_thread(self, create_client):
+        handler = MqttHandler("printer.test", "serial", "access-code")
+        message = Mock(
+            topic="device/serial/report",
+            payload=json.dumps({"print": {"command": "push_status"}}).encode(),
+        )
+
+        handler._on_message(None, None, message)
+
+        self.assertEqual(
+            handler.message_queue.get_nowait(),
+            {"print": {"command": "push_status"}},
+        )
+
+    @patch.object(MqttHandler, "_create_client")
+    def test_malformed_mqtt_payload_is_ignored(self, create_client):
+        handler = MqttHandler("printer.test", "serial", "access-code")
+        message = Mock(topic="device/serial/report", payload=b"not-json")
+
+        handler._on_message(None, None, message)
+
+        self.assertTrue(handler.message_queue.empty())
+
+    @patch.object(MqttHandler, "_create_client")
+    def test_non_object_mqtt_payload_is_ignored(self, create_client):
+        handler = MqttHandler("printer.test", "serial", "access-code")
+        message = Mock(topic="device/serial/report", payload=b"[]")
+
+        handler._on_message(None, None, message)
+
+        self.assertTrue(handler.message_queue.empty())
 
 
 if __name__ == "__main__":

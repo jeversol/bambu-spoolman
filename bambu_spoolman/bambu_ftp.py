@@ -2,7 +2,6 @@ import ftplib
 import os
 import ssl
 import tempfile
-from pathlib import Path
 
 from loguru import logger
 

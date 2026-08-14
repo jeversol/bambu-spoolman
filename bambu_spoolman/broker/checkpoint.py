@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import tempfile
 
 from loguru import logger
 
@@ -24,8 +25,21 @@ def get_checkpoint_metadata():
 
 
 def _save_checkpoint_metadata(metadata):
-    with open(os.path.join(checkpoint_directory(), "metadata.json"), "w") as f:
-        json.dump(metadata, f)
+    directory = checkpoint_directory()
+    metadata_path = os.path.join(directory, "metadata.json")
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", dir=directory, delete=False
+        ) as metadata_file:
+            temporary_path = metadata_file.name
+            json.dump(metadata, metadata_file)
+            metadata_file.flush()
+            os.fsync(metadata_file.fileno())
+        os.replace(temporary_path, metadata_path)
+    finally:
+        if temporary_path is not None and os.path.exists(temporary_path):
+            os.remove(temporary_path)
 
 
 def save_checkpoint(
@@ -39,6 +53,7 @@ def save_checkpoint(
     ams_mapping,
     gcode_file_name,
     using_ams,
+    print_started,
 ):
     shutil.copy(model_path, os.path.join(checkpoint_directory(), "model.3mf"))
 
@@ -48,19 +63,29 @@ def save_checkpoint(
     existing_metadata["current_layer"] = current_layer
     existing_metadata["spent_layers"] = sorted(spent_layers)
     existing_metadata["spent_filaments"] = {
-        str(layer): sorted(filaments)
-        for layer, filaments in spent_filaments.items()
+        str(layer): sorted(filaments) for layer, filaments in spent_filaments.items()
     }
     existing_metadata["ams_mapping"] = ams_mapping
     existing_metadata["gcode_file_name"] = gcode_file_name
     existing_metadata["using_ams"] = using_ams
+    existing_metadata["print_started"] = print_started
     _save_checkpoint_metadata(existing_metadata)
+    logger.info(
+        "event=checkpoint_created task_id={} subtask_id={} layer={} "
+        "print_started={} using_ams={}",
+        task_id,
+        subtask_id,
+        current_layer,
+        print_started,
+        using_ams,
+    )
 
 
 def clear():
-    if os.path.exists(checkpoint_directory()):
-        logger.debug("Clearing checkpoint")
-        shutil.rmtree(checkpoint_directory())
+    directory = get_configuration_path("checkpoint")
+    if os.path.exists(directory):
+        shutil.rmtree(directory)
+        logger.info("event=checkpoint_cleared")
 
 
 def update_layer(layer, spent_layers, spent_filaments):
@@ -72,18 +97,49 @@ def update_layer(layer, spent_layers, spent_filaments):
         for spent_layer, filaments in spent_filaments.items()
     }
     _save_checkpoint_metadata(metadata)
+    logger.debug(
+        "event=checkpoint_updated layer={} accounted_layers={} "
+        "partially_accounted_layers={}",
+        layer,
+        len(spent_layers),
+        len(spent_filaments),
+    )
+
+
+def mark_print_started():
+    metadata = get_checkpoint_metadata()
+    if not metadata:
+        logger.warning("Cannot mark print as started because no checkpoint is saved")
+        return
+
+    metadata["print_started"] = True
+    _save_checkpoint_metadata(metadata)
+    logger.info(
+        "event=checkpoint_print_started task_id={} subtask_id={}",
+        metadata.get("task_id"),
+        metadata.get("subtask_id"),
+    )
 
 
 def recover_model(task_id, subtask_id):
-    logger.info("Attempting to recover task {} subtask {}", task_id, subtask_id)
+    logger.info(
+        "event=checkpoint_recovery_attempt task_id={} subtask_id={}",
+        task_id,
+        subtask_id,
+    )
     metadata = get_checkpoint_metadata()
 
     if not metadata:
-        logger.error("No checkpoint saved")
+        logger.warning(
+            "event=checkpoint_recovery_unavailable task_id={} reason=not_found",
+            task_id,
+        )
         return None
 
-    checkpoint_task_id = metadata.get("task_id")
-    checkpoint_subtask_id = metadata.get("subtask_id")
+    checkpoint_task_id = _normalize_identifier(metadata.get("task_id"))
+    checkpoint_subtask_id = _normalize_identifier(metadata.get("subtask_id"))
+    task_id = _normalize_identifier(task_id)
+    subtask_id = _normalize_identifier(subtask_id)
 
     task_mismatch = (
         task_id is not None
@@ -97,7 +153,8 @@ def recover_model(task_id, subtask_id):
     )
     if task_mismatch or subtask_mismatch:
         logger.error(
-            "Recovered task does not match current task. Expected task id {} and subtask id {}, got task id {} and subtask id {}",
+            "Recovered task does not match current task. Expected task id {} "
+            "and subtask id {}, got task id {} and subtask id {}",
             checkpoint_task_id,
             checkpoint_subtask_id,
             task_id,
@@ -121,6 +178,9 @@ def recover_model(task_id, subtask_id):
     ams_mapping = metadata.get("ams_mapping")
     gcode_file_name = metadata.get("gcode_file_name")
     using_ams = metadata.get("using_ams")
+    # Checkpoints created before lifecycle tracking was added belong to prints
+    # that were already being tracked, so preserve their recovery behavior.
+    print_started = metadata.get("print_started", True)
 
     if using_ams is None:
         # This is an old checkpoint, we can guess whether AMS was used based on
@@ -144,4 +204,13 @@ def recover_model(task_id, subtask_id):
         spent_filaments,
         ams_mapping,
         using_ams,
+        print_started,
+        checkpoint_task_id,
+        checkpoint_subtask_id,
     )
+
+
+def _normalize_identifier(identifier):
+    if identifier is None or identifier == "":
+        return None
+    return str(identifier)

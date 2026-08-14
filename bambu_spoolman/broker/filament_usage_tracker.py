@@ -1,5 +1,6 @@
 import os
 import tempfile
+import time
 import zipfile
 from urllib.parse import urlparse
 
@@ -11,6 +12,7 @@ from bambu_spoolman.broker.checkpoint import (
     clear as clear_checkpoint,
 )
 from bambu_spoolman.broker.checkpoint import (
+    mark_print_started,
     recover_model,
     save_checkpoint,
     update_layer,
@@ -25,6 +27,10 @@ from bambu_spoolman.settings import (
 from bambu_spoolman.spoolman import new_client
 
 MODEL_DOWNLOAD_CHUNK_SIZE = 64 * 1024
+ACTIVE_GCODE_STATES = frozenset({"PAUSE", "RUNNING"})
+FAILED_GCODE_STATES = frozenset({"FAILED", "FAILURE"})
+RECOVERABLE_GCODE_STATES = ACTIVE_GCODE_STATES | {"FINISH"}
+CANCELED_PRINT_ERROR = 50348044
 
 
 class FilamentUsageTracker:
@@ -38,6 +44,9 @@ class FilamentUsageTracker:
 
         self.gcode_state = None
         self.current_layer = None
+        self.print_started = False
+        self.task_id = None
+        self.subtask_id = None
 
     def on_message(self, mqtt_handler, message):
         print_obj = message.get("print", {})
@@ -47,75 +56,140 @@ class FilamentUsageTracker:
         self.gcode_state = print_obj.get("gcode_state", self.gcode_state)
 
         if previous_gcode_state != self.gcode_state:
-            logger.info("Gcode state: {} -> {}", previous_gcode_state, self.gcode_state)
+            logger.info(
+                "event=print_state task_id={} subtask_id={} previous={} current={}",
+                _normalize_identifier(print_obj.get("task_id")) or self.task_id,
+                _normalize_identifier(print_obj.get("subtask_id"))
+                or self.subtask_id,
+                previous_gcode_state,
+                self.gcode_state,
+            )
 
         if command == "project_file":
-            self._handle_print_start(print_obj)
+            if self._is_current_print(print_obj):
+                logger.info(
+                    "event=duplicate_print_announcement task_id={} subtask_id={}",
+                    self.task_id,
+                    self.subtask_id,
+                )
+            else:
+                self._handle_print_start(print_obj)
 
         if command == "push_status":
+            if (
+                self.active_model is None
+                and previous_gcode_state != self.gcode_state
+                and self.gcode_state in RECOVERABLE_GCODE_STATES
+            ):
+                # Recover before handling the current status. A recovered
+                # checkpoint records whether this print had actually started.
+                self._attempt_print_resume(
+                    print_obj.get("task_id"), print_obj.get("subtask_id")
+                )
+
+            if (
+                self.active_model is not None
+                and not self.print_started
+                and self.gcode_state in ACTIVE_GCODE_STATES
+            ):
+                self._mark_print_started()
+
             if "layer_num" in print_obj:
                 last_layer = self.current_layer
-                layer = print_obj["layer_num"]
-                if layer != last_layer:
-                    logger.debug("Layer changed to layer {}", layer)
-                    self._handle_layer_change(layer)
+                try:
+                    layer = int(print_obj["layer_num"])
+                except (TypeError, ValueError):
+                    logger.warning(
+                        "Ignoring invalid layer number: {}", print_obj["layer_num"]
+                    )
+                    layer = last_layer
+                if self.print_started and layer != last_layer:
+                    logger.info(
+                        "event=layer_started task_id={} subtask_id={} layer={} "
+                        "previous_layer={}",
+                        self.task_id,
+                        self.subtask_id,
+                        layer,
+                        last_layer,
+                    )
                     self.current_layer = layer
+                    self._handle_layer_change(layer)
 
             if self.gcode_state == "FINISH":
-                if self.active_model is None and previous_gcode_state != "FINISH":
-                    # The service may restart after the printer finishes but
-                    # before all Spoolman updates succeed. Recover the pending
-                    # checkpoint on the first FINISH status after startup.
-                    self._attempt_print_resume(
-                        print_obj.get("task_id"), print_obj.get("subtask_id")
-                    )
-                if self.active_model is not None:
+                if self.active_model is not None and self.print_started:
                     self._handle_print_end()
+                elif self.active_model is not None:
+                    logger.warning(
+                        "Ignoring FINISH status because the new print has not "
+                        "entered an active state"
+                    )
 
             if (
-                self.gcode_state == "FAILURE"
-                and previous_gcode_state != "FAILURE"
+                self.gcode_state in FAILED_GCODE_STATES
+                and previous_gcode_state not in FAILED_GCODE_STATES
                 and self.active_model is not None
+                and self.print_started
             ):
-                self._handle_print_failure()
+                self._handle_print_failure(f"gcode_state={self.gcode_state}")
 
             if (
-                self.gcode_state == "RUNNING"
-                and previous_gcode_state != "RUNNING"
-                and self.active_model is None
+                str(print_obj.get("print_error")) == str(CANCELED_PRINT_ERROR)
+                and self.active_model is not None
+                and self.print_started
             ):
-                # The print is in progress, but we don't have a model loaded.
-                # Check if we saved the model when the print was started and attempt to
-                # load it.
-                task_id = print_obj.get("task_id")
-                subtask_id = print_obj.get("subtask_id")
-                self._attempt_print_resume(task_id, subtask_id)
+                self._handle_print_failure(
+                    f"print_error={print_obj.get('print_error')}"
+                )
 
     def _handle_print_start(self, print_obj):
-        logger.info("Print started!")
         clear_checkpoint()
         model_url = print_obj.get("url")
 
+        self.active_model = None
+        self.ams_mapping = None
+        self.current_layer = None
+        self.print_started = print_obj.get("gcode_state") in ACTIVE_GCODE_STATES
         self.spent_layers = set()
         self.spent_filaments = {}
+        self.using_ams = False
+        self.task_id = _normalize_identifier(print_obj.get("task_id"))
+        self.subtask_id = _normalize_identifier(print_obj.get("subtask_id"))
+        logger.info(
+            "event=print_announced task_id={} subtask_id={} file={} "
+            "use_ams={} state={}",
+            self.task_id,
+            self.subtask_id,
+            print_obj.get("param"),
+            print_obj.get("use_ams", False),
+            print_obj.get("gcode_state"),
+        )
 
         model = self._retrieve_model(model_url)
         if model is None:
             logger.error("Failed to retrieve model. Print will not be tracked")
             return
 
-        ams_mapping = print_obj.get("ams_mapping", [])
+        ams_mapping = [
+            _normalize_mapping(mapping)
+            for mapping in (print_obj.get("ams_mapping") or [])
+        ]
         if print_obj.get("use_ams", False) or (
             ams_mapping and ams_mapping[0] not in (-1, 255)
         ):
-            logger.info("Using AMS")
             self.using_ams = True
             self.ams_mapping = ams_mapping
-            logger.info("AMS mapping: {}", self.ams_mapping)
+            logger.info(
+                "event=print_ams_mapping task_id={} using_ams=true mapping={}",
+                self.task_id,
+                self.ams_mapping,
+            )
         else:
-            logger.info("Not using AMS")
             self.using_ams = False
             self.ams_mapping = None  # Ensure this is cleared out
+            logger.info(
+                "event=print_ams_mapping task_id={} using_ams=false",
+                self.task_id,
+            )
 
         gcode_file_name = print_obj.get("param")
 
@@ -133,16 +207,18 @@ class FilamentUsageTracker:
             ams_mapping=self.ams_mapping,
             gcode_file_name=gcode_file_name,
             using_ams=self.using_ams,
+            print_started=self.print_started,
         )
 
         # Delete the downloaded model
         os.remove(model)
 
-        # Spend layer 0 filament
-        self._handle_layer_change(0)
-
     def _retrieve_model(self, model_url):
         logger.debug("Loading model from URL: {}", model_url)
+
+        if not model_url:
+            logger.warning("Print announcement did not include a model URL")
+            return None
 
         ftp_uris = ("file", "ftp", "brtc")
 
@@ -162,25 +238,24 @@ class FilamentUsageTracker:
         if self.active_model is None:
             logger.debug("Skipping layer change because no model is loaded")
             return
-        last_layer = self.current_layer
-
-        if last_layer is None:
-            # This is the first reported layer. Spend it immediately; layer 0 is
-            # otherwise falsy and would never be consumed.
-            to_spend = {layer}
-        else:
-            # Spend layers between the last layer and the current layer
-            logger.debug("Last layer: {}", last_layer)
-            logger.debug("Current layer: {}", layer)
-            to_spend = set(range(last_layer + 1, layer + 1))
-
-        # Include earlier failed layers so each new status update retries them.
-        to_spend.update(
+        self.current_layer = layer
+        # Bambu Studio emits M73 L<n> at the start of layer n. Only earlier
+        # layers are known to be complete at that point. Include any earlier
+        # failed layers so a later status update retries them.
+        to_spend = set(
             model_layer
             for model_layer in self.active_model
-            if model_layer <= layer and model_layer not in self.spent_layers
+            if model_layer < layer and model_layer not in self.spent_layers
         )
-        logger.debug("Spending layers: {}", to_spend)
+        if to_spend:
+            logger.info(
+                "event=layers_ready task_id={} reported_layer={} layers={} "
+                "already_accounted={}",
+                self.task_id,
+                layer,
+                sorted(to_spend),
+                len(self.spent_layers),
+            )
 
         for layer_to_spend in sorted(to_spend):
             try:
@@ -193,8 +268,22 @@ class FilamentUsageTracker:
 
             if spent:
                 self.spent_layers.add(layer_to_spend)
+                logger.info(
+                    "event=layer_accounted task_id={} layer={} accounted_layers={} "
+                    "total_layers={}",
+                    self.task_id,
+                    layer_to_spend,
+                    len(self.spent_layers),
+                    len(self.active_model),
+                )
+        self._save_progress(layer)
+
+    def _save_progress(self, fallback_layer=None):
+        checkpoint_layer = (
+            self.current_layer if self.current_layer is not None else fallback_layer
+        )
         update_layer(
-            layer,
+            checkpoint_layer,
             set(self.spent_layers),
             {
                 spent_layer: set(filaments)
@@ -203,10 +292,17 @@ class FilamentUsageTracker:
         )
 
     def _handle_print_end(self):
-        logger.info("Print ended!")
-
         # Spend all layers that haven't already been spent
         remaining_layers = set(self.active_model or {}) - self.spent_layers
+        logger.info(
+            "event=print_finish_received task_id={} subtask_id={} "
+            "accounted_layers={} total_layers={} pending_layers={}",
+            self.task_id,
+            self.subtask_id,
+            len(self.spent_layers),
+            len(self.active_model or {}),
+            len(remaining_layers),
+        )
         if remaining_layers:
             for layer in sorted(remaining_layers):
                 logger.debug(
@@ -215,15 +311,48 @@ class FilamentUsageTracker:
             # A single layer-change pass includes every earlier unspent model
             # layer, so each outstanding layer is attempted at most once for
             # this status update.
-            self._handle_layer_change(max(remaining_layers))
+            self._handle_layer_change(max(remaining_layers) + 1)
 
         remaining_layers = set(self.active_model or {}) - self.spent_layers
         if remaining_layers:
             logger.warning(
-                "Print ended with unspent layers {}. Will retry on the next status update",
+                "Print ended with unspent layers {}. Will retry on the next "
+                "status update",
                 sorted(remaining_layers),
             )
             return False
+
+        task_id = self.task_id
+        subtask_id = self.subtask_id
+        total_layers = len(self.active_model or {})
+        self.active_model = None
+        self.ams_mapping = None
+        self.spent_layers = set()
+        self.spent_filaments = {}
+        self.using_ams = False
+        self.current_layer = None
+        self.print_started = False
+        self.task_id = None
+        self.subtask_id = None
+
+        clear_checkpoint()
+        logger.info(
+            "event=print_tracking_complete task_id={} subtask_id={} layers={}",
+            task_id,
+            subtask_id,
+            total_layers,
+        )
+        return True
+
+    def _handle_print_failure(self, reason="unknown"):
+        logger.warning(
+            "event=print_tracking_stopped task_id={} subtask_id={} reason={} "
+            "accounted_layers={}",
+            self.task_id,
+            self.subtask_id,
+            reason,
+            len(self.spent_layers),
+        )
 
         self.active_model = None
         self.ams_mapping = None
@@ -231,18 +360,9 @@ class FilamentUsageTracker:
         self.spent_filaments = {}
         self.using_ams = False
         self.current_layer = None
-
-        clear_checkpoint()
-        return True
-
-    def _handle_print_failure(self):
-        logger.info("Print failed!")
-
-        self.active_model = None
-        self.ams_mapping = None
-        self.spent_filaments = {}
-        self.using_ams = False
-        self.current_layer = None
+        self.print_started = False
+        self.task_id = None
+        self.subtask_id = None
 
         clear_checkpoint()
 
@@ -273,11 +393,17 @@ class FilamentUsageTracker:
             logger.debug("Spending {}mm of filament {}", usage, filament)
 
             # Use the external spool ID if we're not using an AMS
-            real_mapping = (
-                self.ams_mapping[filament]
-                if self.using_ams and self.ams_mapping
-                else EXTERNAL_SPOOL_ID
-            )
+            if self.using_ams and self.ams_mapping:
+                if filament >= len(self.ams_mapping):
+                    logger.error(
+                        "Filament {} has no entry in AMS mapping {}",
+                        filament,
+                        self.ams_mapping,
+                    )
+                    return False
+                real_mapping = self.ams_mapping[filament]
+            else:
+                real_mapping = EXTERNAL_SPOOL_ID
 
             logger.debug("Real mapping for filament {} is {}", filament, real_mapping)
 
@@ -293,19 +419,33 @@ class FilamentUsageTracker:
 
             # Spend the filament
             self.spoolman_client.consume_spool(spoolman_spool, length=usage)
+            logger.info(
+                "event=filament_consumed task_id={} layer={} logical_filament={} "
+                "tray={} spool_id={} length_mm={:.3f}",
+                self.task_id,
+                layer,
+                filament,
+                real_mapping,
+                spoolman_spool,
+                usage,
+            )
             spent_filaments.add(filament)
+            # Narrow the unavoidable cross-service crash window: persist each
+            # successful Spoolman update instead of waiting for the whole
+            # layer (which may contain several filaments) to finish.
+            self._save_progress(layer)
 
         return spent_filaments.issuperset(layer_usage)
 
     def _download_model(self, model_url):
-        logger.debug("Downloading model from URL: {}", model_url)
+        logger.info("event=model_download_started scheme=http")
 
         temp_file_name = None
         response = None
+        downloaded_bytes = 0
+        started_at = time.monotonic()
         try:
-            with tempfile.NamedTemporaryFile(
-                suffix=".3mf", delete=False
-            ) as model_file:
+            with tempfile.NamedTemporaryFile(suffix=".3mf", delete=False) as model_file:
                 temp_file_name = model_file.name
                 response = requests.get(
                     model_url,
@@ -319,6 +459,7 @@ class FilamentUsageTracker:
                 ):
                     if chunk:
                         model_file.write(chunk)
+                        downloaded_bytes += len(chunk)
         except Exception as e:
             logger.error("Failed to download model: {}", e)
             if temp_file_name is not None:
@@ -331,7 +472,11 @@ class FilamentUsageTracker:
             if response is not None:
                 response.close()
 
-        logger.debug("Model downloaded to {}", temp_file_name)
+        logger.info(
+            "event=model_download_complete bytes={} duration_seconds={:.3f}",
+            downloaded_bytes,
+            time.monotonic() - started_at,
+        )
         return temp_file_name
 
     def _retrieve_model_from_ftp(self, model_path):
@@ -350,6 +495,7 @@ class FilamentUsageTracker:
 
     def _load_model(self, model_path, gcode_file):
         self.active_model = None
+        started_at = time.monotonic()
         try:
             with open_gcode(model_path, gcode_file) as gcode:
                 if gcode is None:
@@ -361,8 +507,6 @@ class FilamentUsageTracker:
             return False
 
         self.active_model = active_model
-        logger.info("Model loaded successfully")
-
         total_filament_usage = {}
 
         for layer, layer_usage in self.active_model.items():
@@ -371,8 +515,18 @@ class FilamentUsageTracker:
                     total_filament_usage.get(filament, 0) + usage
                 )
 
-        for filament, usage in total_filament_usage.items():
-            logger.info("Filament {} usage: {}mm", filament, usage)
+        logger.info(
+            "event=model_loaded task_id={} layers={} filaments={} "
+            "usage_mm={} duration_seconds={:.3f}",
+            self.task_id,
+            len(self.active_model),
+            sorted(total_filament_usage),
+            {
+                filament: round(usage, 3)
+                for filament, usage in total_filament_usage.items()
+            },
+            time.monotonic() - started_at,
+        )
 
         return True
 
@@ -388,10 +542,13 @@ class FilamentUsageTracker:
             spent_filaments,
             ams_mapping,
             using_ams,
+            print_started,
+            checkpoint_task_id,
+            checkpoint_subtask_id,
         ) = result
 
-        logger.info("Recovered model from checkpoint")
-
+        self.task_id = checkpoint_task_id
+        self.subtask_id = checkpoint_subtask_id
         if not self._load_model(model_path, gcode_file_name):
             return
         self.spent_layers = set(spent_layers)
@@ -401,3 +558,56 @@ class FilamentUsageTracker:
         self.ams_mapping = ams_mapping
         self.current_layer = current_layer
         self.using_ams = using_ams
+        self.print_started = print_started
+        logger.info(
+            "event=print_recovered task_id={} subtask_id={} current_layer={} "
+            "accounted_layers={} print_started={} using_ams={}",
+            self.task_id,
+            self.subtask_id,
+            self.current_layer,
+            len(self.spent_layers),
+            self.print_started,
+            self.using_ams,
+        )
+
+    def _mark_print_started(self):
+        mark_print_started()
+        self.print_started = True
+        logger.info(
+            "event=print_tracking_started task_id={} subtask_id={} state={}",
+            self.task_id,
+            self.subtask_id,
+            self.gcode_state,
+        )
+
+    def _is_current_print(self, print_obj):
+        if self.active_model is None:
+            return False
+
+        task_id = _normalize_identifier(print_obj.get("task_id"))
+        subtask_id = _normalize_identifier(print_obj.get("subtask_id"))
+        supplied_identifiers = (
+            (task_id, self.task_id),
+            (subtask_id, self.subtask_id),
+        )
+        comparable = [
+            (incoming, current)
+            for incoming, current in supplied_identifiers
+            if incoming is not None and current is not None
+        ]
+        return bool(comparable) and all(
+            incoming == current for incoming, current in comparable
+        )
+
+
+def _normalize_mapping(mapping):
+    try:
+        return int(mapping)
+    except (TypeError, ValueError):
+        return mapping
+
+
+def _normalize_identifier(identifier):
+    if identifier is None or identifier == "":
+        return None
+    return str(identifier)

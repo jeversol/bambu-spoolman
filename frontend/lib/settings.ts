@@ -25,7 +25,7 @@ export async function getSpoolInTray(tray: number) {
   const settings = await getSettings();
 
   const spoolId = settings.trays[tray];
-  if (!spoolId) {
+  if (spoolId === undefined || spoolId === null) {
     return null;
   }
   return getSpool(spoolId.toString());

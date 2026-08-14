@@ -8,6 +8,7 @@ class GcodeParserTests(unittest.TestCase):
         gcode = """
 ; generated fixture
 M620 S0A
+M83
 G1 X10 E1.5
 M73 L1
 G1 E2
@@ -44,6 +45,61 @@ G3 E4
         self.assertEqual(lines_read, [])
         self.assertEqual(next(operations).params["E"], "1")
         self.assertEqual(lines_read, ["G1 E1\n"])
+
+    def test_retractions_are_not_counted_as_negative_usage(self):
+        gcode = """
+M620 S0
+M83
+G1 E10
+G1 E-2
+M73 L1
+G1 E2
+G1 E5
+"""
+
+        usage = evaluate_gcode(gcode)
+
+        self.assertEqual(usage, {0: {0: 10.0}, 1: {0: 5.0}})
+
+    def test_supports_absolute_extrusion(self):
+        gcode = """
+M620 S0
+M82
+G92 E0
+G1 E10
+G1 E8
+G1 E13
+"""
+
+        usage = evaluate_gcode(gcode)
+
+        self.assertEqual(usage, {0: {0: 13.0}})
+
+    def test_reconciles_layers_to_slicer_filament_totals(self):
+        gcode = """
+; total filament length [mm] : 30.00
+M620 S5
+M83
+G1 E10
+M73 L1
+G1 E10
+"""
+
+        usage = evaluate_gcode(gcode)
+
+        self.assertEqual(usage, {0: {5: 15.0}, 1: {5: 15.0}})
+
+    def test_ignores_non_finite_slicer_totals(self):
+        gcode = """
+; total filament length [mm] : nan
+M620 S0
+M83
+G1 E10
+"""
+
+        usage = evaluate_gcode(gcode)
+
+        self.assertEqual(usage, {0: {0: 10.0}})
 
 
 if __name__ == "__main__":

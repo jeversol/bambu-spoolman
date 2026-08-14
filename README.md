@@ -22,21 +22,26 @@ Set the following environment variables:
 * `SPOOLMAN_URL` -- The base URL for your spoolman instance (i.e. `http://localhost:7912`)
   * `SPOOLMAN_VERIFY` -- Set to `false` to disable SSL verification for spoolman requests (Useful for self-signed certificates)
 * `BAMBU_SPOOLMAN_HTTP_TIMEOUT` -- Timeout in seconds for Spoolman and printer file HTTP requests (default: `30`)
+* `LOGURU_LEVEL` -- Container log verbosity (`INFO` by default; use `DEBUG` for per-message summaries or `TRACE` for raw MQTT payloads)
 * `PRINTER_IP` -- The IP address of your printer
 * `PRINTER_SERIAL` -- The serial number of your printer
 * `PRINTER_ACCESS_CODE` -- The access code for your printer
 * `BAMBU_SPOOLMAN_CONFIG` -- A directory to store the configuration file
 * `SPOOLMAN_AUTO_CREATE_SPOOLS` -- Create spools when detected
 * `SPOOLMAN_AMS_FIELD_NAME` -- Spoolman field to store which AMS a spool is in
-* `SPOOLMAN_AMS_TRAY_NAME` -- Spoolman field to store which tray a spool is in
+* `SPOOLMAN_TRAY_FIELD_NAME` -- Spoolman field to store which tray a spool is in
 
 ## Usage
 
 Once deployed, the web ui can be used to configure the mapping of AMS spool trays -> Spoolman spool ids. An initial connection to the printer is needed to determine the number of AMS systems attached.
 
+## Logging
+
+Container logs use searchable `event=... key=value` messages at `INFO` for MQTT connectivity, print lifecycle, layer accounting, successful filament consumption, checkpoints, AMS/RFID changes, and tray assignments. Set `LOGURU_LEVEL=DEBUG` for MQTT message summaries and processing times, or `TRACE` for complete MQTT payloads. Raw payloads are especially verbose and may contain printer/job metadata.
+
 ## Untested things
 
 * External spools
 * LAN only prints
-* Custom filament/layer change gcode (`M620` is used to detect filament changes and `M730` is used to detect layer changes)
+* Custom filament/layer change gcode (`M620` is used to detect filament changes and `M73` is used to detect layer changes)
 * More than 1 AMS unit (I only have one, but this should support multiple AMS units)

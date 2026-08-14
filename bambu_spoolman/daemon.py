@@ -12,12 +12,26 @@ from bambu_spoolman.grpc.server import serve as run_grpc_server
 
 
 async def async_main():
+    printer_ip = os.environ.get("PRINTER_IP")
+    printer_serial = os.environ.get("PRINTER_SERIAL")
+    automatic_switching = os.environ.get("SPOOLMAN_SPOOL_FIELD_NAME") is not None
+    logger.info(
+        "event=service_start printer_ip={} printer_serial={} "
+        "spoolman_url_configured={} "
+        "config_directory={} automatic_spool_switching={} log_level={}",
+        printer_ip,
+        printer_serial,
+        bool(os.environ.get("SPOOLMAN_URL")),
+        os.environ.get("BAMBU_SPOOLMAN_CONFIG"),
+        automatic_switching,
+        os.environ.get("LOGURU_LEVEL", "INFO"),
+    )
     loop = asyncio.get_event_loop()
     tasks = []
     tasks.append(loop.create_task(run_grpc_server()))
     mqtt = MqttHandler(
-        os.environ.get("PRINTER_IP"),
-        os.environ.get("PRINTER_SERIAL"),
+        printer_ip,
+        printer_serial,
         os.environ.get("PRINTER_ACCESS_CODE"),
     )
 
@@ -30,8 +44,8 @@ async def async_main():
     usage_tracker = FilamentUsageTracker()
     mqtt.add_callback(usage_tracker.on_message)
 
-    if os.environ.get("SPOOLMAN_SPOOL_FIELD_NAME") is not None:
-        logger.info("Enabling automatic spool switching")
+    if automatic_switching:
+        logger.info("event=automatic_spool_switching_enabled")
         mqtt.add_callback(AutomaticSpoolSwitch.get_instance().on_message)
 
     mqtt.start()

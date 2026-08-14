@@ -10,7 +10,7 @@ type Props = {
 
 export async function SpoolConfiguration(props: Props) {
   const spool = await getSpoolInTray(props.trayId);
-  const allSpopols = await getAllSpools();
+  const allSpools = await getAllSpools();
   const selectedSpools = await getSettings().then((settings) =>
     Object.values(settings.trays),
   );
@@ -30,7 +30,7 @@ export async function SpoolConfiguration(props: Props) {
     <TrayConfigForm
       key={spool?.id}
       spool={spool}
-      allSpools={allSpopols}
+      allSpools={allSpools}
       trayId={props.trayId}
       selectedSpools={selectedSpools}
     />

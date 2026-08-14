@@ -48,9 +48,7 @@ class AutomaticSpoolSwitchOverrideTests(unittest.TestCase):
             }
         )
 
-        client_patch = patch(
-            "bambu_spoolman.broker.automatic_spool_switch.new_client"
-        )
+        client_patch = patch("bambu_spoolman.broker.automatic_spool_switch.new_client")
         new_client = client_patch.start()
         self.addCleanup(client_patch.stop)
         self.client = Mock()
@@ -116,6 +114,26 @@ class AutomaticSpoolSwitchOverrideTests(unittest.TestCase):
         self.assertEqual(settings["rfid_overrides"], {})
         self.assertEqual(settings["trays"], {})
         self.client.set_active_tray.assert_called_once_with(32, None, None)
+
+    def test_sync_clears_a_tray_removed_from_the_merged_snapshot(self):
+        self.switch.tray_mapping = {0: "tag-32"}
+
+        self.switch._sync({"ams": {"ams": []}})
+
+        settings = self.read_settings()
+        self.assertEqual(settings["trays"], {})
+        self.assertEqual(settings["locked_trays"], [])
+        self.assertEqual(self.switch.tray_mapping, {})
+        self.client.set_active_tray.assert_called_once_with(32, None, None)
+
+    def test_unlock_normalizes_legacy_string_lock_ids(self):
+        settings = self.read_settings()
+        settings["locked_trays"] = ["0"]
+        self.write_settings(settings)
+
+        self.switch._unlock_tray(0, clear=False)
+
+        self.assertEqual(self.read_settings()["locked_trays"], [])
 
 
 if __name__ == "__main__":

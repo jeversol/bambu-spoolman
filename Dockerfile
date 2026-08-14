@@ -16,7 +16,11 @@ RUN uv sync --locked
 
 RUN scripts/update_protos.sh
 
-RUN uv build && /venv/bin/pip install dist/*.whl
+RUN uv export --locked --no-dev --no-emit-project \
+    --format requirements-txt --output-file /tmp/requirements.txt \
+    && /venv/bin/pip install --require-hashes -r /tmp/requirements.txt \
+    && uv build \
+    && /venv/bin/pip install --no-deps dist/*.whl
 
 
 FROM node:23-alpine AS frontend_builder
@@ -26,7 +30,7 @@ RUN apk add --no-cache protobuf protobuf-dev tree
 WORKDIR /app
 
 COPY frontend/package.json frontend/pnpm-lock.yaml /app/frontend/
-RUN cd /app/frontend && npm install -g pnpm@10 && pnpm install
+RUN cd /app/frontend && npm install -g pnpm@10 && pnpm install --frozen-lockfile
 
 COPY frontend /app/frontend
 COPY proto /app/proto

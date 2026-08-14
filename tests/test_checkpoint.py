@@ -4,7 +4,12 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from bambu_spoolman.broker.checkpoint import recover_model, save_checkpoint
+from bambu_spoolman.broker.checkpoint import (
+    clear,
+    mark_print_started,
+    recover_model,
+    save_checkpoint,
+)
 
 
 class CheckpointRecoveryTests(unittest.TestCase):
@@ -29,6 +34,7 @@ class CheckpointRecoveryTests(unittest.TestCase):
         subtask_id="subtask-1",
         spent_layers=(0, 1, 3),
         spent_filaments=None,
+        print_started=True,
     ):
         if spent_filaments is None:
             spent_filaments = {0: (0,), 1: (0, 1)}
@@ -42,6 +48,7 @@ class CheckpointRecoveryTests(unittest.TestCase):
             ams_mapping=[0, -1, -1, -1],
             gcode_file_name="plate_1.gcode",
             using_ams=True,
+            print_started=print_started,
         )
 
     def test_recovers_when_status_omits_task_identifiers(self):
@@ -51,10 +58,31 @@ class CheckpointRecoveryTests(unittest.TestCase):
 
         self.assertIsNotNone(result)
 
+    def test_clearing_without_a_checkpoint_does_not_create_its_directory(self):
+        checkpoint_path = os.path.join(self.config_directory, "checkpoint")
+
+        clear()
+
+        self.assertFalse(os.path.exists(checkpoint_path))
+
     def test_recovers_when_checkpoint_also_has_no_task_identifiers(self):
         self.save_checkpoint(task_id=None, subtask_id=None)
 
         result = recover_model(None, None)
+
+        self.assertIsNotNone(result)
+
+    def test_recovers_when_status_has_blank_task_identifiers(self):
+        self.save_checkpoint()
+
+        result = recover_model("", "")
+
+        self.assertIsNotNone(result)
+
+    def test_numeric_and_string_task_identifiers_match(self):
+        self.save_checkpoint(task_id=123, subtask_id=456)
+
+        result = recover_model("123", "456")
 
         self.assertIsNotNone(result)
 
@@ -78,6 +106,36 @@ class CheckpointRecoveryTests(unittest.TestCase):
         result = recover_model("task-1", "subtask-1")
 
         self.assertEqual(result[4], {2: [0], 5: [0, 1]})
+
+    def test_recovers_print_lifecycle_state(self):
+        self.save_checkpoint(print_started=False)
+
+        result = recover_model("task-1", "subtask-1")
+
+        self.assertFalse(result[7])
+
+    def test_marks_checkpoint_print_as_started(self):
+        self.save_checkpoint(print_started=False)
+
+        mark_print_started()
+        result = recover_model("task-1", "subtask-1")
+
+        self.assertTrue(result[7])
+
+    def test_legacy_checkpoint_is_treated_as_started(self):
+        self.save_checkpoint(print_started=False)
+        metadata_path = os.path.join(
+            self.config_directory, "checkpoint", "metadata.json"
+        )
+        with open(metadata_path) as metadata_file:
+            metadata = json.load(metadata_file)
+        metadata.pop("print_started")
+        with open(metadata_path, "w") as metadata_file:
+            json.dump(metadata, metadata_file)
+
+        result = recover_model("task-1", "subtask-1")
+
+        self.assertTrue(result[7])
 
     def test_recovers_legacy_checkpoint_from_current_layer(self):
         self.save_checkpoint()

@@ -1,3 +1,5 @@
+import asyncio
+
 import grpc
 from google.protobuf.empty_pb2 import Empty
 from google.protobuf.json_format import ParseDict
@@ -9,7 +11,7 @@ import bambu_spoolman.grpc.spoolman_pb2 as spoolman_pb2
 from bambu_spoolman.bambu_mqtt import stateful_printer_info
 from bambu_spoolman.broker.automatic_spool_switch import AutomaticSpoolSwitch
 from bambu_spoolman.grpc import bambu_spoolman_pb2_grpc
-from bambu_spoolman.settings import load_settings, save_settings
+from bambu_spoolman.settings import edit_settings, load_settings
 from bambu_spoolman.spoolman import instance as spoolman_instance
 
 
@@ -35,28 +37,32 @@ class BambuSpoolmanServicer(bambu_spoolman_pb2_grpc.BambuSpoolmanServicer):
         )
 
     async def Info(self, request: Empty, context: ServicerContext):
-        features = pb2.Features(
-            tray_locking=spoolman_instance().supports_tray_locking()
-        )
+        client = spoolman_instance()
+        features = pb2.Features(tray_locking=client.supports_tray_locking())
         return pb2.InfoResponse(
-            spoolman_url=spoolman_instance().endpoint,
-            spoolman_valid=spoolman_instance().validate(),
+            spoolman_url=client.endpoint,
+            spoolman_valid=await asyncio.to_thread(client.validate),
             features=features,
         )
 
     async def GetSpools(self, request: pb2.GetSpoolsRequest, context: ServicerContext):
+        client = spoolman_instance()
         if len(request.spool_id) == 0:
             # Retrieve all spools
-            spools = spoolman_instance().get_spools()
+            spools = await asyncio.to_thread(client.get_spools)
         else:
             # Retrieve specific spools by ID
-            spools = [
-                spoolman_instance().get_spool(spool_id) for spool_id in request.spool_id
-            ]
+            spools = await asyncio.gather(
+                *(
+                    asyncio.to_thread(client.get_spool, spool_id)
+                    for spool_id in request.spool_id
+                )
+            )
         return pb2.GetSpoolsResponse(
             spools=[
                 ParseDict(spool, spoolman_pb2.Spool(), ignore_unknown_fields=True)
                 for spool in spools
+                if spool is not None
             ]
         )
 
@@ -71,81 +77,95 @@ class BambuSpoolmanServicer(bambu_spoolman_pb2_grpc.BambuSpoolmanServicer):
     async def UpdateTray(
         self, request: pb2.UpdateTrayRequest, context: ServicerContext
     ):
-        tray_id = str(request.tray_id)
-        spool_id = request.spool_id
+        tray_id_int = int(request.tray_id)
+        tray_id = str(tray_id_int)
+        spool_id = int(request.spool_id)
+        client = spoolman_instance()
+        logger.info(
+            "event=tray_assignment_requested tray={} spool_id={}",
+            tray_id_int,
+            spool_id,
+        )
 
-        settings = load_settings()
-        trays = settings.get("trays", {})
-
-        locked_trays = settings.get("locked_trays", [])
-        logger.debug(f"Locked trays: {locked_trays}")
-        if tray_id in locked_trays:
-            await context.abort(
-                grpc.StatusCode.INVALID_ARGUMENT, "Tray is locked and cannot be changed"
-            )
-
-        tray_id_int = int(tray_id)
-
-        # Get the old spool_id if there was one, so we can clear its tray field
-        # Try both string and int keys for compatibility
-        old_spool_id = trays.get(tray_id) or trays.get(tray_id_int)
-
-        if spool_id == -1:
-            # Clearing the tray assignment
-            if tray_id in trays:
-                del trays[tray_id]
-                settings["trays"] = trays
-
-            # Clear the tray fields in Spoolman for the old spool
-            if old_spool_id is not None:
-                try:
-                    spoolman_instance().set_active_tray(old_spool_id, None, None)
-                except Exception as e:
-                    logger.error(
-                        f"Failed to clear tray fields for spool {old_spool_id}: {e}"
-                    )
-        else:
-            spool_id = int(spool_id)
-            spool = spoolman_instance().get_spool(spool_id)
+        if tray_id_int < 0:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "Invalid tray ID")
+        if spool_id < -1:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "Invalid spool ID")
+        if spool_id != -1:
+            spool = await asyncio.to_thread(client.get_spool, spool_id)
             if spool is None:
                 await context.abort(grpc.StatusCode.NOT_FOUND, "Spool not found")
 
-            if spool_id in trays.values():
-                if trays.get(tray_id, None) != spool_id:
-                    await context.abort(
-                        grpc.StatusCode.INVALID_ARGUMENT,
-                        "Spool is already assigned to a different tray",
+        validation_error = None
+        with edit_settings() as settings:
+            trays = settings.get("trays", {})
+
+            locked_trays = settings.get("locked_trays", [])
+            logger.debug("Locked trays: {}", locked_trays)
+            if any(str(locked_id) == tray_id for locked_id in locked_trays):
+                validation_error = "Tray is locked and cannot be changed"
+
+            old_spool_id = trays.get(tray_id)
+            if old_spool_id is None:
+                old_spool_id = trays.get(tray_id_int)
+
+            assigned_elsewhere = any(
+                str(existing_tray_id) != tray_id
+                and str(existing_spool_id) == str(spool_id)
+                for existing_tray_id, existing_spool_id in trays.items()
+            )
+            if validation_error is None and spool_id != -1 and assigned_elsewhere:
+                validation_error = "Spool is already assigned to a different tray"
+
+            if validation_error is None and spool_id == -1:
+                trays.pop(tray_id, None)
+                trays.pop(tray_id_int, None)
+            elif validation_error is None:
+                trays.pop(tray_id_int, None)
+                trays[tray_id] = spool_id
+            settings["trays"] = trays
+
+        if validation_error is not None:
+            logger.warning(
+                "event=tray_assignment_rejected tray={} spool_id={} reason={}",
+                tray_id_int,
+                spool_id,
+                validation_error,
+            )
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, validation_error)
+
+        try:
+            if spool_id == -1:
+                if old_spool_id is not None:
+                    await asyncio.to_thread(
+                        client.set_active_tray, old_spool_id, None, None
                     )
-
-            trays[tray_id] = spool_id
-
-            # Set the tray fields in Spoolman for the new spool
-            # Calculate AMS and tray slot (both 1-indexed for display)
-            ams_num = (tray_id_int // 4) + 1
-            tray_num = (tray_id_int % 4) + 1
-
-            try:
-                spoolman_instance().set_active_tray(spool_id, ams_num, tray_num)
-            except Exception as e:
-                logger.error(f"Failed to set tray fields for spool {spool_id}: {e}")
-
-            # Clear the tray fields for the old spool if it was different
-            if old_spool_id is not None and old_spool_id != spool_id:
-                try:
-                    spoolman_instance().set_active_tray(old_spool_id, None, None)
-                except Exception as e:
-                    logger.error(
-                        f"Failed to clear tray fields for old spool {old_spool_id}: {e}"
+            else:
+                ams_num = None if tray_id_int == 255 else (tray_id_int // 4) + 1
+                tray_num = None if tray_id_int == 255 else (tray_id_int % 4) + 1
+                await asyncio.to_thread(
+                    client.set_active_tray, spool_id, ams_num, tray_num
+                )
+                if old_spool_id is not None and str(old_spool_id) != str(spool_id):
+                    await asyncio.to_thread(
+                        client.set_active_tray, old_spool_id, None, None
                     )
-
-        settings["trays"] = trays
-        save_settings(settings)
+        except Exception as e:
+            logger.error("Failed to update spool tray fields: {}", e)
+        logger.info(
+            "event=tray_assignment_updated tray={} old_spool_id={} spool_id={}",
+            tray_id_int,
+            old_spool_id,
+            spool_id,
+        )
         return Empty()
 
     async def GetSpoolByUUID(
         self, request: pb2.GetSpoolbyUUIDRequest, context: ServicerContext
     ):
-        spool = spoolman_instance().lookup_by_tray_uuid(request.uuid)
+        spool = await asyncio.to_thread(
+            spoolman_instance().lookup_by_tray_uuid, request.uuid
+        )
         if spool is None:
             await context.abort(grpc.StatusCode.NOT_FOUND, "Spool not found")
         return ParseDict(spool, spoolman_pb2.Spool(), ignore_unknown_fields=True)
@@ -156,7 +176,7 @@ class BambuSpoolmanServicer(bambu_spoolman_pb2_grpc.BambuSpoolmanServicer):
         tray_uuid = request.uuid
         spool_id = request.spool_id
 
-        spool = spoolman_instance().get_spool(spool_id)
+        spool = await asyncio.to_thread(spoolman_instance().get_spool, spool_id)
 
         logger.debug(f"spool: {spool}")
 
@@ -169,13 +189,20 @@ class BambuSpoolmanServicer(bambu_spoolman_pb2_grpc.BambuSpoolmanServicer):
                 "Spoolman instance does not support tray locking",
             )
 
-        success = spoolman_instance().set_tray_uuid(spool_id, tray_uuid)
+        success = await asyncio.to_thread(
+            spoolman_instance().set_tray_uuid, spool_id, tray_uuid
+        )
         if not success:
             await context.abort(
                 grpc.StatusCode.INTERNAL, "Failed to set tray UUID for spool"
             )
 
         AutomaticSpoolSwitch.get_instance().sync()
+        logger.info(
+            "event=spool_rfid_updated spool_id={} linked={}",
+            spool_id,
+            bool(tray_uuid),
+        )
         return Empty()
 
     async def OverrideTrayRFID(
