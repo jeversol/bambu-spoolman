@@ -32,11 +32,19 @@ jobs:
         uses: docker/metadata-action@v3
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+      - name: Generate build information
+        id: build_info
+        run: echo "created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           push: ${{ github.event_name != 'pull_request' }}
+          build-args: |
+            BAMBU_SPOOLMAN_VERSION=${{ github.ref_name }}
+            BAMBU_SPOOLMAN_BUILD_NUMBER=${{ github.run_number }}.${{ github.run_attempt }}
+            BAMBU_SPOOLMAN_REVISION=${{ github.sha }}
+            BAMBU_SPOOLMAN_BUILD_DATE=${{ steps.build_info.outputs.created }}
           labels: ${{ steps.meta.outputs.labels }}
           platforms: linux/amd64
           tags: |

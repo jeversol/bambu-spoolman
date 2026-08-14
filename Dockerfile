@@ -40,9 +40,24 @@ RUN cd /app/frontend && pnpm proto-generate && pnpm build
 
 FROM base AS app
 
+ARG BAMBU_SPOOLMAN_VERSION=local
+ARG BAMBU_SPOOLMAN_BUILD_NUMBER=local
+ARG BAMBU_SPOOLMAN_REVISION=unknown
+ARG BAMBU_SPOOLMAN_BUILD_DATE=unknown
+
 RUN apk add --no-cache supervisor nodejs pnpm
 
-ENV LOGURU_LEVEL=INFO
+ENV LOGURU_LEVEL=INFO \
+    BAMBU_SPOOLMAN_VERSION=${BAMBU_SPOOLMAN_VERSION} \
+    BAMBU_SPOOLMAN_BUILD_NUMBER=${BAMBU_SPOOLMAN_BUILD_NUMBER} \
+    BAMBU_SPOOLMAN_REVISION=${BAMBU_SPOOLMAN_REVISION} \
+    BAMBU_SPOOLMAN_BUILD_DATE=${BAMBU_SPOOLMAN_BUILD_DATE}
+
+LABEL org.opencontainers.image.title="bambu-spoolman" \
+      org.opencontainers.image.version=${BAMBU_SPOOLMAN_VERSION} \
+      org.opencontainers.image.revision=${BAMBU_SPOOLMAN_REVISION} \
+      org.opencontainers.image.created=${BAMBU_SPOOLMAN_BUILD_DATE} \
+      io.github.mrkirby153.bambu-spoolman.build-number=${BAMBU_SPOOLMAN_BUILD_NUMBER}
 
 COPY --from=builder /venv /venv
 COPY --from=frontend_builder /app/frontend/public /app/frontend/public

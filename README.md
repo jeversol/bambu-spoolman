@@ -39,6 +39,8 @@ Once deployed, the web ui can be used to configure the mapping of AMS spool tray
 
 Container logs use searchable `event=... key=value` messages at `INFO` for MQTT connectivity, print lifecycle, layer accounting, successful filament consumption, checkpoints, AMS/RFID changes, and tray assignments. Set `LOGURU_LEVEL=DEBUG` for MQTT message summaries and processing times, or `TRACE` for complete MQTT payloads. Raw payloads are especially verbose and may contain printer/job metadata.
 
+Each container logs its release/ref, CI build number, Git revision, and build timestamp in the `event=service_start` message. Locally built images use `version=local build_number=local` unless those Docker build arguments are supplied explicitly.
+
 ## Untested things
 
 * External spools

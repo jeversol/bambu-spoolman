@@ -1,5 +1,6 @@
 # Reliability audit changelog
 
+- Added container build identity to the startup log (`version`, CI `build_number`, Git `revision`, and `build_date`) and matching OCI image labels so a deployment can be traced to a specific workflow run and commit.
 - Based lifecycle handling on the observed Bambu MQTT contract: X1 printers send full `push_status` payloads, while P1 printers send deltas that must be merged; `pushing.pushall` requests a complete snapshot.
 - Moved model downloads, G-code parsing, settings writes, and Spoolman calls off Paho's MQTT network thread while preserving message order, preventing slow work from starving the five-second keepalive.
 - Split print announcement from confirmed print start. A `FINISH` report is ignored until the announced job has entered `RUNNING` or `PAUSE`, fixing the stale-finish race seen in the pod logs.
