@@ -1,3 +1,4 @@
+import ast
 import datetime
 import json
 import os
@@ -15,9 +16,9 @@ def parse_log_line(line):
     timestamp, message = line.split("]: ")
     message = message.strip()
 
-    return datetime.datetime.strptime(timestamp[1:], "%Y-%m-%dT%H:%M:%S.%f"), eval(
-        message
-    )
+    return datetime.datetime.strptime(
+        timestamp[1:], "%Y-%m-%dT%H:%M:%S.%f"
+    ), ast.literal_eval(message)
 
 
 def main():

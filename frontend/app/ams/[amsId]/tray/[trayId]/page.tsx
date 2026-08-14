@@ -78,7 +78,7 @@ async function RfidSettings({ trayId }: RfidProps) {
       </CardHeader>
       <CardContent>
         <p className="text-foreground">
-          A Spool with an RFID tag is is detected. If you want to automatically
+          A spool with an RFID tag is detected. If you want to automatically
           assign this spool to the tray when it&apos;s inserted, click the
           button below.
         </p>
@@ -98,10 +98,13 @@ async function TrayPage(props: Props) {
 
   const trayId = amsId * 4 + rawTrayId;
 
-  const minTray = amsId * 4;
-  const maxTray = amsId * 4 + 4;
-
-  if (trayId > maxTray || trayId < minTray) {
+  if (
+    !Number.isInteger(amsId) ||
+    !Number.isInteger(rawTrayId) ||
+    amsId < 0 ||
+    rawTrayId < 0 ||
+    rawTrayId > 3
+  ) {
     notFound();
   }
 

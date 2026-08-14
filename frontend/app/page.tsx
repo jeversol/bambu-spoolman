@@ -1,110 +1,111 @@
-import AmsComponent from "@/components/AmsComponent";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbList,
-} from "@/components/ui/breadcrumb";
-import { Suspense } from "react";
-import { Skeleton } from "@/components/ui/skeleton";
-import { CurrentSpool } from "@/components/tray-config/CurrentSpool";
-import { getSettings } from "@/lib/settings";
-import { Button } from "@/components/ui/button";
-import Link from "next/link";
 import { headers } from "next/headers";
+import { Suspense } from "react";
+import { SpoolMappingDashboard } from "@/components/dashboard/SpoolMappingDashboard";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  type DashboardTray,
+  normalizeColorHex,
+  toDashboardSpool,
+} from "@/lib/dashboard";
+import {
+  getPrinterSettings,
+  getPrinterTray,
+  isPrinterTrayOccupied,
+} from "@/lib/printer";
+import { getSettings } from "@/lib/settings";
+import { getAllSpools } from "@/lib/spool";
+
+const UNDEFINED_RFID_TAG = "00000000000000000000000000000000";
 
 function SkeletonPage() {
   return (
-    <>
-      <Breadcrumb>
-        <BreadcrumbList>
-          <BreadcrumbItem>Home</BreadcrumbItem>
-        </BreadcrumbList>
-      </Breadcrumb>
-      <div className="mt-6">
-        <h1 className="text-2xl font-semibold mb-4">
-          BambuLab Spoolman Integration
-        </h1>
-        <Card>
-          <CardHeader>
-            <CardTitle>
-              <Skeleton className="w-20 h-6" />
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Skeleton className="w-full h-32" />
-          </CardContent>
-        </Card>
+    <div className="space-y-7">
+      <Skeleton className="h-12 w-full rounded-xl" />
+      <div>
+        <Skeleton className="mb-3 h-6 w-20" />
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {["one", "two", "three", "four"].map((key) => (
+            <Skeleton key={key} className="h-80 rounded-2xl" />
+          ))}
+        </div>
       </div>
-    </>
-  );
-}
-
-async function ExternalSpoolConfiguration() {
-  const settings = await getSettings();
-  const externalSpoolId = settings.trays[255];
-  return (
-    <div className="flex mb-4">
-      <Card className="w-full">
-        <CardHeader>
-          <CardTitle>External Spool Configuration</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {externalSpoolId != null ? (
-            <Link href="/external-spool" className="w-full">
-              <CurrentSpool trayId={255} showClearButton={false} />
-            </Link>
-          ) : (
-            <Button variant="outline" asChild>
-              <Link href="/external-spool">Configure</Link>
-            </Button>
-          )}
-        </CardContent>
-      </Card>
     </div>
   );
-}
-
-async function AmsConfiguration() {
-  const settings = await getSettings();
-  const trayCount = settings.trayCount;
-  const amsCount = Math.ceil(trayCount / 4);
-  const components = [];
-  for (let i = 0; i < amsCount; i++) {
-    components.push(<AmsComponent key={i} id={i} />);
-  }
-  return components;
 }
 
 async function HomePage() {
-  // Force the page to be dynamic
   await headers();
+
+  const [settings, printerSettings, rawSpools] = await Promise.all([
+    getSettings(),
+    getPrinterSettings(),
+    getAllSpools(),
+  ]);
+  const spools = rawSpools.map(toDashboardSpool);
+  const spoolsById = new Map(spools.map((spool) => [spool.id, spool]));
+  const assignedTrayIds = Object.keys(settings.trays)
+    .map(Number)
+    .filter((trayId) => Number.isFinite(trayId) && trayId !== 255);
+  const printerTrayCount = (printerSettings?.print?.ams?.ams?.length ?? 0) * 4;
+  const configuredTrayCount =
+    assignedTrayIds.length === 0 ? 0 : Math.max(...assignedTrayIds) + 1;
+  const trayCount = Math.max(
+    settings.trayCount,
+    printerTrayCount,
+    configuredTrayCount,
+  );
+  const roundedTrayCount = Math.ceil(trayCount / 4) * 4;
+
+  const trays: DashboardTray[] = Array.from(
+    { length: roundedTrayCount },
+    (_, id) => {
+      const printerTray = getPrinterTray(printerSettings, id);
+      const rfidTag = printerTray?.tray_uuid;
+      const printerName =
+        printerTray?.tray_sub_brands || printerTray?.tray_type || null;
+
+      return {
+        id,
+        amsNumber: Math.floor(id / 4) + 1,
+        trayNumber: (id % 4) + 1,
+        occupied: isPrinterTrayOccupied(printerSettings, id),
+        printerName,
+        printerColorHex: normalizeColorHex(printerTray?.tray_color),
+        rfidTag: rfidTag && rfidTag !== UNDEFINED_RFID_TAG ? rfidTag : null,
+        locked: settings.lockedTrays.includes(id),
+        spool: spoolsById.get(settings.trays[id]) ?? null,
+      };
+    },
+  );
+
+  const assignments = Object.fromEntries(
+    Object.entries(settings.trays).map(([trayId, spoolId]) => {
+      const numericTrayId = Number(trayId);
+      const location =
+        numericTrayId === 255
+          ? "external holder"
+          : `AMS ${Math.floor(numericTrayId / 4) + 1} · Tray ${(numericTrayId % 4) + 1}`;
+      return [Number(spoolId), location];
+    }),
+  );
+
   return (
-    <>
-      <Breadcrumb>
-        <BreadcrumbList>
-          <BreadcrumbItem>Home</BreadcrumbItem>
-        </BreadcrumbList>
-      </Breadcrumb>
-      <div className="mt-6">
-        <h1 className="text-2xl font-semibold mb-4">
-          BambuLab Spoolman Integration
-        </h1>
-        <ExternalSpoolConfiguration />
-        <div className="flex flex-col gap-4">
-          <AmsConfiguration />
-        </div>
-      </div>
-    </>
+    <SpoolMappingDashboard
+      connected={printerSettings !== null}
+      trays={trays}
+      externalSpool={spoolsById.get(settings.trays[255]) ?? null}
+      spools={spools}
+      assignments={assignments}
+    />
   );
 }
 
-export default async function Home() {
+export default function Home() {
   return (
-    <div className="container mx-auto p-4 max-w-2xl">
+    <main className="mx-auto w-full max-w-6xl px-4 pb-16 pt-5">
       <Suspense fallback={<SkeletonPage />}>
         <HomePage />
       </Suspense>
-    </div>
+    </main>
   );
 }

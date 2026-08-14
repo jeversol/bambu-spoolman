@@ -2,9 +2,10 @@ import ftplib
 import os
 import ssl
 import tempfile
-from pathlib import Path
 
 from loguru import logger
+
+FTP_DOWNLOAD_BLOCK_SIZE = 64 * 1024
 
 
 class ImplicitFTP_TLS(ftplib.FTP_TLS):
@@ -35,24 +36,36 @@ class ImplicitFTP_TLS(ftplib.FTP_TLS):
 
 def retrieve_3mf(filename):
     logger.debug("Retrieving cached 3mf file {}", filename)
-    with ImplicitFTP_TLS() as ftp:
-        ftp.set_pasv(True)
-        ftp.connect(os.environ.get("PRINTER_IP"), 990, 5)
-        ftp.login("bblp", os.environ.get("PRINTER_ACCESS_CODE"))
-        ftp.prot_p()
+    temp_file_name = None
+    try:
+        with ImplicitFTP_TLS() as ftp:
+            ftp.set_pasv(True)
+            ftp.connect(os.environ.get("PRINTER_IP"), 990, 5)
+            ftp.login("bblp", os.environ.get("PRINTER_ACCESS_CODE"))
+            ftp.prot_p()
 
-        # Check if the file exists
-        logger.debug("Checking if file {} exists", filename)
-        try:
+            # Check if the file exists
+            logger.debug("Checking if file {} exists", filename)
             size = ftp.size(filename)
             logger.debug("File {} exists, size: {}", filename, size)
-        except ftplib.error_perm:
-            logger.error("File {} does not exist", filename)
-            return None
 
-        # Get the file
-        logger.debug("Retrieving file {}", filename)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".3mf") as f:
-            ftp.retrbinary(f"RETR {filename}", f.write)
-            logger.debug("File retrieved")
-            return f.name
+            # Get the file
+            logger.debug("Retrieving file {}", filename)
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".3mf") as f:
+                temp_file_name = f.name
+                ftp.retrbinary(
+                    f"RETR {filename}",
+                    f.write,
+                    blocksize=FTP_DOWNLOAD_BLOCK_SIZE,
+                )
+    except ftplib.all_errors as e:
+        logger.error("Failed to retrieve file {}: {}", filename, e)
+        if temp_file_name is not None:
+            try:
+                os.remove(temp_file_name)
+            except FileNotFoundError:
+                pass
+        return None
+
+    logger.debug("File retrieved")
+    return temp_file_name

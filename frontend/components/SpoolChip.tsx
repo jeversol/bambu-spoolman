@@ -1,6 +1,7 @@
-import { Spool } from "@/lib/proto/bambu_spoolman/grpc/spoolman";
-import { MultiColorDirection } from "@/lib/types";
 import { cva, type VariantProps } from "class-variance-authority";
+import { getRemainingPercent } from "@/lib/dashboard";
+import type { Spool } from "@/lib/proto/bambu_spoolman/grpc/spoolman";
+import { MultiColorDirection } from "@/lib/types";
 
 const spoolChip = cva(["border", "border-2"], {
   variants: {
@@ -10,7 +11,7 @@ const spoolChip = cva(["border", "border-2"], {
     },
     active: {
       true: ["border-yellow-500"],
-      false: ["border-black"],
+      false: ["border-foreground/70"],
     },
   },
   defaultVariants: {
@@ -29,18 +30,18 @@ function getBackgroundColor(spool: Spool) {
     return "bg-gray-500";
   }
   if (filament.colorHex) {
-    return "#" + filament.colorHex;
+    return `#${filament.colorHex}`;
   }
   if (filament.multiColorDirection && filament.multiColorHexes) {
     if (filament.multiColorDirection === MultiColorDirection.LONGITUDINAL) {
       const hexes = filament.multiColorHexes
         .split(",")
-        .map((hex) => "#" + hex)
+        .map((hex) => `#${hex}`)
         .join(", ");
-      return "linear-gradient(90deg, " + hexes + ")";
+      return `linear-gradient(90deg, ${hexes})`;
     }
     if (filament.multiColorDirection === MultiColorDirection.COAXIAL) {
-      const hexes = filament.multiColorHexes.split(",").map((hex) => "#" + hex);
+      const hexes = filament.multiColorHexes.split(",").map((hex) => `#${hex}`);
 
       const percentages = 100.0 / hexes.length;
       const stops = hexes
@@ -48,23 +49,16 @@ function getBackgroundColor(spool: Spool) {
           return `${hex} ${i * percentages}%, ${hex} ${(i + 1) * percentages}%`;
         })
         .join(", ");
-      return "linear-gradient(90deg, " + stops + ")";
+      return `linear-gradient(90deg, ${stops})`;
     }
   }
 }
 
 export function SpoolChip(props: SpoolChipProps) {
-  let percentage = 100;
-  if (
-    props.spool &&
-    props.withPercentage &&
-    props.spool.remainingLength &&
-    props.spool.usedLength
-  ) {
-    const remainingLength = props.spool.remainingLength;
-    const usedLength = props.spool.usedLength;
-    percentage = (remainingLength / (remainingLength + usedLength)) * 100;
-  }
+  const percentage =
+    props.spool && props.withPercentage
+      ? (getRemainingPercent(props.spool) ?? 0)
+      : 100;
   return (
     <div className="flex flex-col items-center">
       <div className={spoolChip({ size: props.size, active: false })}>

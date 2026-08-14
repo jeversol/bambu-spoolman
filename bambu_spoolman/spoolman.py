@@ -1,9 +1,12 @@
 import os
 import time
+from urllib.parse import urlencode
 
 import requests
 import urllib3
 from loguru import logger
+
+from bambu_spoolman.settings import get_http_timeout
 
 
 class SpoolmanClient:
@@ -12,8 +15,11 @@ class SpoolmanClient:
     """
 
     def __init__(self, endpoint):
-        self.endpoint = endpoint
+        if not endpoint or not str(endpoint).strip():
+            raise ValueError("Spoolman endpoint must be configured")
+        self.endpoint = str(endpoint).strip().rstrip("/")
         self.verify = os.environ.get("SPOOLMAN_VERIFY", "true").lower() == "true"
+        self.timeout = get_http_timeout()
         self._external_filaments_cache = None
         self._external_filaments_cache_time = None
         self.ams_field_name = os.environ.get("SPOOLMAN_AMS_FIELD_NAME")
@@ -26,28 +32,51 @@ class SpoolmanClient:
         """
         Validates the connection to the Spoolman API
         """
-        response = requests.get(self._make_api_route("health"), verify=self.verify)
-        return response.status_code == 200
+        try:
+            response = requests.get(
+                self._make_api_route("health"),
+                verify=self.verify,
+                timeout=self.timeout,
+            )
+            return response.status_code == 200
+        except requests.RequestException as e:
+            logger.warning("Could not validate Spoolman connection: {}", e)
+            return False
 
     def get_info(self):
         """
         Get information about the Spoolman instance
         """
-        response = requests.get(self._make_api_route("info"), verify=self.verify)
+        response = requests.get(
+            self._make_api_route("info"),
+            verify=self.verify,
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
         return response.json()
 
     def get_filaments(self):
         """
         Get a list of all filaments
         """
-        response = requests.get(self._make_api_route("filament"), verify=self.verify)
+        response = requests.get(
+            self._make_api_route("filament"),
+            verify=self.verify,
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
         return response.json()
 
     def get_spools(self):
         """
         Get a list of all spools
         """
-        response = requests.get(self._make_api_route("spool"), verify=self.verify)
+        response = requests.get(
+            self._make_api_route("spool"),
+            verify=self.verify,
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
         return response.json()
 
     def get_external_filaments(self, use_cache=True):
@@ -71,6 +100,7 @@ class SpoolmanClient:
             response = requests.get(
                 self._make_api_route("external/filament"),
                 verify=self.verify,
+                timeout=self.timeout,
             )
             response.raise_for_status()
 
@@ -92,7 +122,9 @@ class SpoolmanClient:
         """
         try:
             response = requests.get(
-                self._make_api_route(f"spool/{spool_id}"), verify=self.verify
+                self._make_api_route(f"spool/{spool_id}"),
+                verify=self.verify,
+                timeout=self.timeout,
             )
             response.raise_for_status()
             return response.json()
@@ -103,8 +135,12 @@ class SpoolmanClient:
         """
         Consume a part of a spool
         """
-        assert length or weight, "Must provide either length or weight"
-        assert not (length and weight), "Must provide either length or weight, not both"
+        if (length is None) == (weight is None):
+            raise ValueError("Must provide exactly one of length or weight")
+
+        amount = length if length is not None else weight
+        if amount <= 0:
+            raise ValueError("Consumption amount must be positive")
 
         response = requests.put(
             self._make_api_route(f"spool/{spool_id}/use"),
@@ -113,7 +149,9 @@ class SpoolmanClient:
                 "use_weight": weight,
             },
             verify=self.verify,
+            timeout=self.timeout,
         )
+        response.raise_for_status()
         return response.json()
 
     def lookup_by_tray_uuid(self, tray_uuid):
@@ -145,18 +183,22 @@ class SpoolmanClient:
             return False
         # Get extra data
         extra = existing_spool.get("extra", {})
-        # Set the new tray uuid
-        extra[extra_field] = f'"{tray_uuid}"'
+        # An empty UUID permanently removes the RFID association.
+        if tray_uuid:
+            extra[extra_field] = f'"{tray_uuid}"'
+        else:
+            extra.pop(extra_field, None)
         # Update the spool
         try:
             response = requests.patch(
                 self._make_api_route(f"spool/{spool_id}"),
                 json={"extra": extra},
                 verify=self.verify,
+                timeout=self.timeout,
             )
             response.raise_for_status()
             return True
-        except requests.exceptions.HTTPError:
+        except requests.exceptions.RequestException:
             return False
 
     def supports_tray_locking(self):
@@ -180,7 +222,8 @@ class SpoolmanClient:
         # Skip if neither environment variable is set
         if self.ams_field_name is None and self.tray_field_name is None:
             logger.debug(
-                "Neither SPOOLMAN_AMS_FIELD_NAME nor SPOOLMAN_TRAY_FIELD_NAME set, skipping tray field update"
+                "Neither SPOOLMAN_AMS_FIELD_NAME nor SPOOLMAN_TRAY_FIELD_NAME "
+                "is set; skipping tray field update"
             )
             return False
 
@@ -197,14 +240,14 @@ class SpoolmanClient:
             if ams_num is not None:
                 extra[self.ams_field_name] = f'"{ams_num}"'
             else:
-                extra[self.ams_field_name] = f'""'
+                extra[self.ams_field_name] = '""'
 
         # Set or clear the tray field
         if self.tray_field_name:
             if tray_num is not None:
                 extra[self.tray_field_name] = f'"{tray_num}"'
             else:
-                extra[self.tray_field_name] = f'""'
+                extra[self.tray_field_name] = '""'
 
         # Update the spool
         try:
@@ -212,16 +255,18 @@ class SpoolmanClient:
                 self._make_api_route(f"spool/{spool_id}"),
                 json={"extra": extra},
                 verify=self.verify,
+                timeout=self.timeout,
             )
             response.raise_for_status()
             logger.debug(
-                f"Set AMS/tray fields for spool {spool_id}: AMS={ams_num}, Tray={tray_num}"
+                "Set AMS/tray fields for spool {}: AMS={}, Tray={}",
+                spool_id,
+                ams_num,
+                tray_num,
             )
             return True
-        except requests.exceptions.HTTPError as e:
-            logger.error(
-                f"Failed to set AMS/tray fields for spool {spool_id}: status={e.response.status_code}, response={e.response.text}"
-            )
+        except requests.exceptions.RequestException as e:
+            logger.error("Failed to set AMS/tray fields for spool {}: {}", spool_id, e)
             return False
 
     def create_spool(self, filament_id, tray_uuid, initial_weight=1000):
@@ -247,6 +292,7 @@ class SpoolmanClient:
                 self._make_api_route("spool"),
                 json=spool_data,
                 verify=self.verify,
+                timeout=self.timeout,
             )
 
             response.raise_for_status()
@@ -317,7 +363,13 @@ class SpoolmanClient:
             elif filament_colors is None:
                 filament_colors = []
 
-            # Check if any color from tray matches any color from filament (intersection)
+            filament_colors = [
+                color.lstrip("#")[:6].upper()
+                for color in filament_colors
+                if isinstance(color, str) and color
+            ]
+
+            # Match when the tray and external filament color sets intersect.
             if any(color in filament_colors for color in color_hexes):
                 color_matched.append(filament)
 
@@ -338,7 +390,9 @@ class SpoolmanClient:
                 for brand in sub_brands:
                     if brand in filament_id:
                         logger.info(
-                            f"Found exact sub-brand match: {filament.get('name')} (id: {filament_id})"
+                            "Found exact sub-brand match: {} (id: {})",
+                            filament.get("name"),
+                            filament_id,
                         )
                         return filament
 
@@ -347,19 +401,24 @@ class SpoolmanClient:
             filament_material = filament.get("material", "").upper()
             if filament_material == filament_type.upper():
                 logger.info(
-                    f"Found material type match: {filament.get('name')} (id: {filament.get('id')})"
+                    "Found material type match: {} (id: {})",
+                    filament.get("name"),
+                    filament.get("id"),
                 )
                 return filament
 
         logger.debug(
-            f"No external filament match for {filament_sub_brand} ({filament_type}) with color {color_hexes}"
+            "No external filament match for {} ({}) with color {}",
+            filament_sub_brand,
+            filament_type,
+            color_hexes,
         )
         return None
 
     def create_filament_from_external(self, external_filament, tray_material=None):
         """
         Creates a filament from an external filament definition
-        tray_material: Optional material from tray (e.g. "PLA Matte") to preserve full variant
+        tray_material: Optional tray material used to preserve the full variant
         Returns the created filament or None on failure
         """
         try:
@@ -378,7 +437,7 @@ class SpoolmanClient:
                 logger.error(f"Failed to get or create vendor: {vendor_name}")
                 return None
 
-            # Use tray material if provided to preserve variants like "PLA Matte", "PLA Basic"
+            # Use tray material to preserve variants such as Matte and Basic.
             # Otherwise fall back to external filament's material
             material = (
                 tray_material
@@ -387,7 +446,7 @@ class SpoolmanClient:
             )
 
             # Handle multi-color filaments
-            # External filaments can have either color_hex (single) or color_hexes (multiple)
+            # External records use color_hex (single) or color_hexes (multiple).
             color_hex = external_filament.get("color_hex")
             color_hexes = external_filament.get("color_hexes")
 
@@ -420,6 +479,7 @@ class SpoolmanClient:
                 self._make_api_route("filament"),
                 json=filament_data,
                 verify=self.verify,
+                timeout=self.timeout,
             )
             response.raise_for_status()
 
@@ -427,7 +487,9 @@ class SpoolmanClient:
             return response.json()
         except requests.exceptions.HTTPError as e:
             logger.error(
-                f"HTTP error creating filament from external: status={e.response.status_code}, response={e.response.text}"
+                "HTTP error creating filament from external: status={}, response={}",
+                e.response.status_code,
+                e.response.text,
             )
             return None
         except Exception as e:
@@ -438,28 +500,23 @@ class SpoolmanClient:
         """
         Automatically creates a spool from tray data
         First tries to match with external filaments, then falls back to basic creation
-        tray_data should contain: tray_uuid, tray_sub_brands (material), tray_color, tray_weight, tray_diameter
+        tray_data contains the RFID, material, color, and weight reported by the tray
         Returns the created spool or None on failure
         """
         tray_uuid = tray_data.get("tray_uuid")
-        material = tray_data.get("tray_sub_brands", "PLA")
-        color_hex = tray_data.get("tray_color", "000000")
+        material = (
+            tray_data.get("tray_sub_brands") or tray_data.get("tray_type") or "PLA"
+        )
+        color_hex = tray_data.get("tray_color") or "000000"
         tray_weight = tray_data.get("tray_weight")
-        diameter = tray_data.get("tray_diameter", "1.75")
 
         # Clean up color hex (remove alpha channel if present)
         if len(color_hex) == 8:
             color_hex = color_hex[:6]
 
-        # Parse diameter and weight
-        try:
-            diameter_float = float(diameter)
-        except:
-            diameter_float = 1.75
-
         try:
             weight_int = int(tray_weight) if tray_weight else 1000
-        except:
+        except (TypeError, ValueError):
             weight_int = 1000
 
         logger.info(f"Auto-creating spool: {material} {color_hex} ({weight_int}g)")
@@ -469,7 +526,7 @@ class SpoolmanClient:
 
         filament = None
         if external_filament:
-            # Try to create from external filament, passing the tray material to preserve variant
+            # Preserve the material variant reported by the tray.
             filament = self.create_filament_from_external(external_filament, material)
 
         if filament is None:
@@ -486,7 +543,11 @@ class SpoolmanClient:
         """
         try:
             # Try to find existing vendor
-            response = requests.get(self._make_api_route("vendor"), verify=self.verify)
+            response = requests.get(
+                self._make_api_route("vendor"),
+                verify=self.verify,
+                timeout=self.timeout,
+            )
             response.raise_for_status()
             vendors = response.json()
             for vendor in vendors:
@@ -502,6 +563,7 @@ class SpoolmanClient:
                 self._make_api_route("vendor"),
                 json=vendor_data,
                 verify=self.verify,
+                timeout=self.timeout,
             )
             response.raise_for_status()
 
@@ -512,7 +574,7 @@ class SpoolmanClient:
             return None
 
     def _make_api_route(self, route, **kwargs):
-        query_string = "&".join([f"{k}={v}" for k, v in kwargs.items()])
+        query_string = urlencode(kwargs)
         if query_string:
             return f"{self.endpoint}/api/v1/{route}?{query_string}"
         return f"{self.endpoint}/api/v1/{route}"

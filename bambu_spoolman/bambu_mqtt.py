@@ -1,4 +1,6 @@
+import copy
 import json
+import queue
 import ssl
 import threading
 import time
@@ -7,15 +9,45 @@ from typing import Callable
 import paho.mqtt.client as mqtt
 from loguru import logger
 
-from bambu_spoolman.settings import load_settings, save_settings
+from bambu_spoolman.settings import edit_settings
 
 
 def recursive_merge(dict1, dict2):
     for key, value in dict2.items():
-        if key in dict1 and isinstance(value, dict):
+        if key in dict1 and isinstance(dict1[key], dict) and isinstance(value, dict):
             recursive_merge(dict1[key], value)
+        elif (
+            key in dict1
+            and isinstance(dict1[key], list)
+            and isinstance(value, list)
+            and value
+            and _is_keyed_object_list(dict1[key])
+            and _is_keyed_object_list(value)
+        ):
+            _merge_keyed_object_list(dict1[key], value)
         else:
             dict1[key] = value
+
+
+def _is_keyed_object_list(value):
+    return all(isinstance(item, dict) and "id" in item for item in value)
+
+
+def _merge_keyed_object_list(existing, delta):
+    """Merge P-series list deltas by their stable object IDs.
+
+    P-series printers commonly send only the AMS unit or tray which changed.
+    Replacing the entire list loses every omitted unit/tray. Empty lists remain
+    authoritative and are handled by ``recursive_merge`` as replacements.
+    """
+    existing_by_id = {str(item["id"]): item for item in existing}
+    for item in delta:
+        item_id = str(item["id"])
+        if item_id in existing_by_id:
+            recursive_merge(existing_by_id[item_id], item)
+        else:
+            existing.append(item)
+            existing_by_id[item_id] = item
 
 
 class StatefulPrinterInfo:
@@ -25,6 +57,7 @@ class StatefulPrinterInfo:
         self.last_update = 0
         self.connected = False
         self.tray_count = 0
+        self._lock = threading.RLock()
 
     def handle_message(self, mqtt_handler, message):
         if "print" not in message:
@@ -35,18 +68,28 @@ class StatefulPrinterInfo:
             logger.debug("Ignoring message: {}", message)
             return  # Not a status message
         # Merge the new info with the old info
-        recursive_merge(self._info, message)
-        self.last_update = int(time.time())
-        self.update_tray_count(
-            len(self._info.get("print", {}).get("ams", {}).get("ams", [])) * 4
-        )
+        with self._lock:
+            recursive_merge(self._info, message)
+            raw_ams = print_status.get("ams")
+            if isinstance(raw_ams, dict):
+                _prune_ams_by_presence(
+                    self._info.get("print", {}).get("ams", {}), raw_ams
+                )
+            self.last_update = int(time.time())
+            tray_count = (
+                len(self._info.get("print", {}).get("ams", {}).get("ams", [])) * 4
+            )
+        self.update_tray_count(tray_count)
 
     def update_tray_count(self, count):
         if self.tray_count != count:
-            settings = load_settings()
-            settings["tray_count"] = count
-            save_settings(settings)
-            logger.debug("Updated tray count to {}", count)
+            with edit_settings() as settings:
+                settings["tray_count"] = count
+            logger.info(
+                "event=printer_tray_count_changed previous={} current={}",
+                self.tray_count,
+                count,
+            )
 
         self.tray_count = count
 
@@ -57,18 +100,71 @@ class StatefulPrinterInfo:
 
     def on_disconnect(self, mqtt_handler):
         self.connected = False
+        logger.info("event=printer_status_disconnected")
 
     def solicit(self):
-        logger.debug("Soliciting printer info")
+        logger.info("event=printer_snapshot_requested command=pushall")
         self.mqtt_handler.publish(
             {"pushing": {"sequence_id": "0", "command": "pushall"}}
         )
 
     def get_info(self):
-        return self._info
+        with self._lock:
+            return copy.deepcopy(self._info)
 
 
 stateful_printer_info = StatefulPrinterInfo()
+
+
+def _prune_ams_by_presence(merged_ams, raw_ams):
+    units = merged_ams.get("ams")
+    if not isinstance(units, list):
+        return
+
+    if "ams_exist_bits" in raw_ams:
+        ams_bits = _presence_bits(raw_ams.get("ams_exist_bits"))
+        if ams_bits is not None:
+            units[:] = [unit for unit in units if _bit_is_set(ams_bits, unit.get("id"))]
+
+    if "tray_exist_bits" in raw_ams:
+        tray_bits = _presence_bits(raw_ams.get("tray_exist_bits"))
+        if tray_bits is not None:
+            for unit in units:
+                trays = unit.get("tray")
+                if not isinstance(trays, list):
+                    continue
+                try:
+                    unit_id = int(unit.get("id"))
+                except (TypeError, ValueError):
+                    continue
+                trays[:] = [
+                    tray
+                    for tray in trays
+                    if _tray_bit_is_set(tray_bits, unit_id, tray.get("id"))
+                ]
+
+
+def _presence_bits(value):
+    try:
+        return value if isinstance(value, int) else int(str(value), 16)
+    except (TypeError, ValueError):
+        logger.warning("Ignoring invalid AMS presence bitmask: {}", value)
+        return None
+
+
+def _bit_is_set(bits, index):
+    try:
+        return bool(bits & (1 << int(index)))
+    except (TypeError, ValueError):
+        return True
+
+
+def _tray_bit_is_set(bits, unit_id, tray_id):
+    try:
+        return _bit_is_set(bits, unit_id * 4 + int(tray_id))
+    except (TypeError, ValueError):
+        return True
+
 
 MAX_BACKOFF_DURATION = 60
 
@@ -80,9 +176,16 @@ class MqttHandler(threading.Thread):
         self.printer_access_code = printer_access_code
         self.connected = False
         self.pending_messages = []
+        self.pending_messages_lock = threading.Lock()
 
         self.client = self._create_client()
         self.callbacks = {"on_connect": [], "on_message": [], "on_disconnect": []}
+        self.message_queue = queue.Queue()
+        self.message_dispatcher = threading.Thread(
+            target=self._dispatch_messages,
+            daemon=True,
+            name=f"MqttDispatcher-{printer_serial}",
+        )
 
         self.backoff = None
 
@@ -91,9 +194,19 @@ class MqttHandler(threading.Thread):
         self.name = f"MqttHandler-{printer_serial}"
 
     def run(self):
+        self.message_dispatcher.start()
+        logger.info(
+            "event=mqtt_dispatcher_started printer_serial={}", self.printer_serial
+        )
         last_error = None
         while True:
             try:
+                logger.info(
+                    "event=mqtt_connect_attempt printer_serial={} printer_ip={} "
+                    "port=8883 keepalive_seconds=5",
+                    self.printer_serial,
+                    self.printer_ip,
+                )
                 self.client.connect(self.printer_ip, 8883, keepalive=5)
                 self.client.loop_forever(retry_first_connection=True)
             except TimeoutError:
@@ -114,7 +227,8 @@ class MqttHandler(threading.Thread):
                 if e.errno == 113:
                     if last_error != "oserror113":
                         logger.warning(
-                            f"Connection to printer {self.printer_serial} failed: No route to host"
+                            "Connection to printer {} failed: No route to host",
+                            self.printer_serial,
                         )
                     last_error = "oserror113"
                     time.sleep(5)
@@ -123,12 +237,14 @@ class MqttHandler(threading.Thread):
                     logger.error(
                         f"Error occurred in MQTT loop. Retrying in {duration}s: {e}"
                     )
+                    self._reset_client()
                     time.sleep(duration)
             except Exception as e:
                 duration = self._backoff()
                 logger.exception(
                     f"Error occurred in MQTT loop. Retrying in {duration}s: {e}"
                 )
+                self._reset_client()
                 time.sleep(duration)
 
     def add_callback(self, callback: Callable[["MqttHandler", dict], None]):
@@ -141,42 +257,118 @@ class MqttHandler(threading.Thread):
         self.callbacks["on_disconnect"].append(callback)
 
     def _on_connect(self, client, userdata, flags, rc):
-        logger.info(f"Connected to printer {self.printer_serial} with result code {rc}")
+        logger.info(
+            "event=mqtt_connected printer_serial={} result_code={}",
+            self.printer_serial,
+            rc,
+        )
         self.connected = True
         self._subscribe()
 
         for callback in self.callbacks["on_connect"]:
             self._run_callback("on_connect", callback, self)
 
-        logger.debug(f"Pending messages: {self.pending_messages}")
-        for message in self.pending_messages:
+        with self.pending_messages_lock:
+            pending_messages = self.pending_messages
+            self.pending_messages = []
+        logger.debug("Pending messages: {}", pending_messages)
+        for message in pending_messages:
             self.publish(message)
-        self.pending_messages = []
         self.backoff = None
 
     def _on_message(self, client, userdata, msg):
+        logger.trace("MQTT topic={} payload={}", msg.topic, msg.payload)
+        try:
+            message = json.loads(msg.payload)
+        except (TypeError, UnicodeDecodeError, json.JSONDecodeError) as e:
+            logger.error("Ignoring malformed MQTT message: {}", e)
+            return
+        if not isinstance(message, dict):
+            logger.error(
+                "Ignoring MQTT payload with unexpected JSON type: {}",
+                type(message).__name__,
+            )
+            return
+
+        # Model downloads, G-code parsing, and Spoolman requests can take
+        # longer than the MQTT keepalive. Dispatch them in order off the Paho
+        # network thread so status processing cannot disconnect the printer.
+        print_obj = message.get("print", {})
         logger.debug(
-            f"Received message on topic {msg.topic} with payload {msg.payload}"
+            "event=mqtt_message_received topic={} command={} state={} layer={} "
+            "task_id={}",
+            msg.topic,
+            print_obj.get("command"),
+            print_obj.get("gcode_state"),
+            print_obj.get("layer_num"),
+            print_obj.get("task_id"),
         )
-        for callback in self.callbacks["on_message"]:
-            self._run_callback("on_message", callback, self, json.loads(msg.payload))
+        self.message_queue.put(message)
+        queue_depth = self.message_queue.qsize()
+        if queue_depth >= 10 and queue_depth % 10 == 0:
+            logger.warning(
+                "event=mqtt_dispatch_backlog printer_serial={} queued_messages={}",
+                self.printer_serial,
+                queue_depth,
+            )
+
+    def _dispatch_messages(self):
+        while True:
+            message = self.message_queue.get()
+            started_at = time.monotonic()
+            try:
+                for callback in self.callbacks["on_message"]:
+                    self._run_callback("on_message", callback, self, message)
+            finally:
+                duration = time.monotonic() - started_at
+                command = message.get("print", {}).get("command")
+                if duration >= 1:
+                    logger.warning(
+                        "event=mqtt_message_slow command={} duration_seconds={:.3f} "
+                        "queued_messages={}",
+                        command,
+                        duration,
+                        self.message_queue.qsize(),
+                    )
+                else:
+                    logger.debug(
+                        "event=mqtt_message_processed command={} "
+                        "duration_seconds={:.3f}",
+                        command,
+                        duration,
+                    )
+                self.message_queue.task_done()
 
     def _on_disconnect(self, client, userdata, rc):
-        logger.info(
-            f"Disconnected from printer {self.printer_serial} with result code {rc}"
+        logger.warning(
+            "event=mqtt_disconnected printer_serial={} result_code={}",
+            self.printer_serial,
+            rc,
         )
         self.connected = False
         for callback in self.callbacks["on_disconnect"]:
             self._run_callback("on_disconnect", callback, self)
 
     def publish(self, message, wait=False):
-        if not self.connected:
-            self.pending_messages.append(message)
-            return
+        with self.pending_messages_lock:
+            if not self.connected:
+                self.pending_messages.append(message)
+                logger.info(
+                    "event=mqtt_publish_queued printer_serial={} queued_messages={}",
+                    self.printer_serial,
+                    len(self.pending_messages),
+                )
+                return
 
         if isinstance(message, dict):
             message = json.dumps(message)
         result = self.client.publish(f"device/{self.printer_serial}/request", message)
+        logger.debug(
+            "event=mqtt_message_published printer_serial={} bytes={} wait={}",
+            self.printer_serial,
+            len(message),
+            wait,
+        )
         if wait:
             result.wait_for_publish()
         return
@@ -196,8 +388,26 @@ class MqttHandler(threading.Thread):
 
         return client
 
+    def _reset_client(self):
+        """Replace a client whose packet parser may be in an invalid state."""
+        old_client = self.client
+
+        if self.connected:
+            self.connected = False
+            for callback in self.callbacks["on_disconnect"]:
+                self._run_callback("on_disconnect", callback, self)
+
+        try:
+            old_client.disconnect()
+        except Exception as e:
+            logger.debug("Failed to disconnect broken MQTT client: {}", e)
+
+        self.client = self._create_client()
+
     def _subscribe(self):
-        self.client.subscribe(f"device/{self.printer_serial}/report")
+        topic = f"device/{self.printer_serial}/report"
+        self.client.subscribe(topic)
+        logger.info("event=mqtt_subscribed topic={}", topic)
 
     def _backoff(self):
         if self.backoff is None:

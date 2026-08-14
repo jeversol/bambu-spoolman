@@ -1,0 +1,62 @@
+"use client";
+
+import { Moon, Sun } from "lucide-react";
+import { useEffect } from "react";
+
+import { Button } from "@/components/ui/button";
+
+type Theme = "light" | "dark";
+
+const storageKey = "bambu-spoolman-theme";
+
+function applyTheme(theme: Theme) {
+  const root = document.documentElement;
+  root.classList.toggle("dark", theme === "dark");
+  root.style.colorScheme = theme;
+}
+
+function getCurrentTheme(): Theme {
+  return document.documentElement.classList.contains("dark") ? "dark" : "light";
+}
+
+export function ThemeToggle() {
+  useEffect(() => {
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== storageKey) return;
+
+      const nextTheme = event.newValue
+        ? event.newValue === "dark"
+          ? "dark"
+          : "light"
+        : "dark";
+      applyTheme(nextTheme);
+    };
+
+    window.addEventListener("storage", handleStorage);
+
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, []);
+
+  function toggleTheme() {
+    const nextTheme: Theme = getCurrentTheme() === "dark" ? "light" : "dark";
+    applyTheme(nextTheme);
+    localStorage.setItem(storageKey, nextTheme);
+  }
+
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="icon"
+      className="size-11 bg-background/95 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:size-9"
+      onClick={toggleTheme}
+      aria-label="Toggle light and dark theme"
+      title="Toggle light and dark theme"
+    >
+      <Sun aria-hidden="true" className="hidden dark:block" />
+      <Moon aria-hidden="true" className="block dark:hidden" />
+    </Button>
+  );
+}

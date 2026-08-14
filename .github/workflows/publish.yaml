@@ -3,7 +3,7 @@ name: Publish Docker image
 on:
   push:
     branches:
-      - main
+      - personal
 
 env:
   REGISTRY: ghcr.io
@@ -12,34 +12,73 @@ env:
 jobs:
   build-and-push:
     permissions:
+      contents: read
       packages: write
 
     runs-on: ubuntu-latest
 
     steps:
-      - name: Setup QEMU
-        uses: docker/setup-qemu-action@v3
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - name: Audit locked dependencies
+        run: sh scripts/security-audit.sh
+      - name: Generate build information
+        id: build_info
+        run: echo "created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+      - name: Build image for vulnerability scanning
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          load: true
+          tags: bambu-spoolman:scan
+          build-args: |
+            BAMBU_SPOOLMAN_VERSION=${{ github.ref_name }}
+            BAMBU_SPOOLMAN_BUILD_NUMBER=${{ github.run_number }}.${{ github.run_attempt }}
+            BAMBU_SPOOLMAN_REVISION=${{ github.sha }}
+            BAMBU_SPOOLMAN_BUILD_DATE=${{ steps.build_info.outputs.created }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke-test production container
+        run: sh scripts/container-smoke-test.sh bambu-spoolman:scan
+      - name: Scan image for known vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: bambu-spoolman:scan
+          scanners: vuln
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: "1"
+          version: v0.74.0
       - name: Log in
-        uses: docker/login-action@v3
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v3
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=personal
+            type=sha,prefix=sha-,format=long
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
+          build-args: |
+            BAMBU_SPOOLMAN_VERSION=${{ github.ref_name }}
+            BAMBU_SPOOLMAN_BUILD_NUMBER=${{ github.run_number }}.${{ github.run_attempt }}
+            BAMBU_SPOOLMAN_REVISION=${{ github.sha }}
+            BAMBU_SPOOLMAN_BUILD_DATE=${{ steps.build_info.outputs.created }}
           labels: ${{ steps.meta.outputs.labels }}
-          platforms: linux/amd64,linux/arm64
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          sbom: true
+          provenance: mode=max

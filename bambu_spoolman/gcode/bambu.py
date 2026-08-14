@@ -1,44 +1,67 @@
-import os
-import shutil
-import tempfile
+import io
 import xml.etree.ElementTree as ET
 import zipfile
+from contextlib import contextmanager
 
 from loguru import logger
 
 
-def extract_gcode(path, gcode_path=None):
-    logger.debug(f"Extracting GCODE from {path}")
-    with tempfile.TemporaryDirectory() as temp_folder:
-        logger.debug("Extracting {} to {}", path, temp_folder)
-        with zipfile.ZipFile(path, "r") as zip_ref:
-            zip_ref.extractall(temp_folder)
+@contextmanager
+def open_gcode(path, gcode_path=None):
+    """Open a G-code file inside a 3MF archive as a streaming text reader."""
+    logger.debug("Opening GCODE from {}", path)
 
-        # Find the GCODE file
+    try:
+        archive = zipfile.ZipFile(path, "r")
+    except (OSError, zipfile.BadZipFile) as e:
+        logger.error("Could not open 3MF archive: {}", e)
+        yield None
+        return
 
+    with archive:
         if gcode_path is None:
-            model_settings_path = os.path.join(
-                temp_folder, "Metadata", "model_settings.config"
-            )
-            logger.debug(f"Looking for GCODE in {model_settings_path}")
+            metadata_path = "Metadata/model_settings.config"
+            logger.debug("Looking for GCODE in {}", metadata_path)
+            try:
+                with archive.open(metadata_path) as metadata_file:
+                    root = ET.parse(metadata_file).getroot()
+            except KeyError:
+                logger.error("Could not find model settings in 3MF archive")
+                yield None
+                return
+            except (ET.ParseError, OSError) as e:
+                logger.error("Could not parse model settings: {}", e)
+                yield None
+                return
 
-            root = ET.parse(model_settings_path).getroot()
+            if not len(root):
+                logger.error("Model settings do not contain a plate")
+                yield None
+                return
+
             plate = root[0]
             for item in plate:
-                if item.attrib["key"] == "gcode_file":
-                    gcode_path = os.path.join(temp_folder, item.attrib["value"])
+                if item.attrib.get("key") == "gcode_file":
+                    gcode_path = item.attrib.get("value")
                     break
 
-            if gcode_path is None:
-                logger.error("Could not find GCODE file")
-                return
-        else:
-            gcode_path = os.path.join(temp_folder, gcode_path)
+        if gcode_path is None:
+            logger.error("Could not find GCODE file")
+            yield None
+            return
 
-        logger.debug(f"Found GCODE file at {gcode_path}")
-        with open(gcode_path, "r") as f:
-            gcode = f.read()
-            logger.debug(f"Read {len(gcode)} bytes of GCODE")
-            # Delete the temp folder
-            shutil.rmtree(temp_folder)
-            return gcode
+        # ZIP members always use forward slashes. A leading slash would make
+        # sense on the printer filesystem but is not part of the archive name.
+        archive_path = gcode_path.replace("\\", "/").lstrip("/")
+        logger.debug("Found GCODE file at {}", archive_path)
+
+        try:
+            raw_gcode = archive.open(archive_path)
+        except KeyError:
+            logger.error("Could not find GCODE file {} in 3MF archive", archive_path)
+            yield None
+            return
+
+        with raw_gcode:
+            with io.TextIOWrapper(raw_gcode, encoding="utf-8") as gcode:
+                yield gcode

@@ -1,11 +1,11 @@
 import {
   RadioGroup,
   RadioGroupItem,
-  RadioGroupProps,
+  type RadioGroupProps,
 } from "@/components/ui/radio-group";
-import { Spool } from "@/lib/proto/bambu_spoolman/grpc/spoolman";
-import { Label } from "../ui/label";
+import type { Spool } from "@/lib/proto/bambu_spoolman/grpc/spoolman";
 import { SpoolChip } from "../SpoolChip";
+import { Label } from "../ui/label";
 
 interface Props extends RadioGroupProps {
   initialSpool: Spool | null;
@@ -36,10 +36,15 @@ export function SpoolRadioGroup({
         <SpoolChip spool={spool} size="small" />
         <div className="flex-1">
           <div className="font-medium">
-            {spool.filament?.material ?? "Unknown"}
+            #{spool.id} ·{" "}
+            {spool.filament?.name || spool.filament?.material || "Unknown"}
           </div>
           <div className="text-sm text-muted-foreground">
-            ID: {spool.id} • {spool.remainingWeight.toFixed(0)}g remaining
+            {[spool.filament?.vendor?.name, spool.filament?.material]
+              .filter(Boolean)
+              .join(" · ") || "Filament details unavailable"}
+            {" · "}
+            {spool.remainingWeight.toFixed(0)}g remaining
           </div>
         </div>
       </Label>

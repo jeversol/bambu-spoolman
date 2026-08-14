@@ -1,0 +1,42 @@
+# Reliability audit changelog
+
+- Replaced the end-of-life Node 23 builder and floating tool images with supported, version-and-digest-pinned images; removed pnpm, Supervisor, and its second Python installation from the runtime image.
+- Updated the locked Next.js, React, nice-grpc, protobufjs, Sharp, requests, urllib3, idna, and python-dotenv dependency paths to patched same-major releases and added reproducible npm/Python security audits.
+- Pinned GitHub Actions to reviewed commit SHAs, upgraded away from Node 20 and deprecated `set-output` implementations, and added tests plus high/critical image scanning as mandatory pre-publish gates.
+- Added conservative weekly Dependabot updates, daily deployed-image/lockfile rescanning, immutable commit image tags, SBOM generation, and build provenance attestations.
+- Replaced Supervisor with Tini and a portable fail-together entrypoint, added container process lifecycle logs, and made the Next.js standalone trace include its complete SWC runtime helper package under Node 24.
+- Added container build identity to the startup log (`version`, CI `build_number`, Git `revision`, and `build_date`) and matching OCI image labels so a deployment can be traced to a specific workflow run and commit.
+- Based lifecycle handling on the observed Bambu MQTT contract: X1 printers send full `push_status` payloads, while P1 printers send deltas that must be merged; `pushing.pushall` requests a complete snapshot.
+- Moved model downloads, G-code parsing, settings writes, and Spoolman calls off Paho's MQTT network thread while preserving message order, preventing slow work from starving the five-second keepalive.
+- Split print announcement from confirmed print start. A `FINISH` report is ignored until the announced job has entered `RUNNING` or `PAUSE`, fixing the stale-finish race seen in the pod logs.
+- Track task/subtask identity and ignore duplicate `project_file` announcements so an MQTT duplicate cannot reset progress and consume filament twice.
+- Recognize the protocol's `FAILED` state (while retaining legacy `FAILURE` compatibility) and the cancellation error code in either numeric or string form.
+- Treat Bambu Studio's `M73 L<n>` marker as the start of layer `n`: only earlier layers are charged, while a true `FINISH` charges the final completed layer.
+- Improved G-code accounting for relative and absolute extrusion (`M83`, `M82`, and `G92`), retractions/unretractions, sparse logical filament IDs, and Bambu Studio's own total-filament metadata.
+- Reconcile per-layer estimates to the slicer's total filament length when the metadata is valid, retaining the layer distribution while matching the authoritative total.
+- Persist successful consumption per filament, retain failed layers for retry, and keep the checkpoint after a `FINISH` until every Spoolman update succeeds.
+- Added atomic checkpoint writes, persisted lifecycle state, normalized task identifiers and AMS mappings, and kept backward-compatible checkpoint recovery.
+- Made settings updates atomic and serialized read-modify-write operations so MQTT and gRPC updates cannot silently overwrite each other.
+- Made cached printer status thread-safe and fixed recursive delta merging when a field changes between scalar and object forms.
+- Made automatic RFID/AMS switching consume the merged printer snapshot, remove mappings for genuinely removed trays, normalize legacy lock IDs, and clean stale tray metadata.
+- Fixed locked-tray validation, duplicate spool assignment checks, integer/string legacy IDs, external-holder tray metadata, and blocking Spoolman calls in the async gRPC server.
+- Fixed the Spoolman client URL handling, response validation, consumption argument validation, tray-field update request, timeout handling, external color normalization, and malformed tray metadata handling.
+- Fixed frontend stale-cache behavior after clearing a tray, a tray-route off-by-one/NaN validation bug, a falsey spool-ID check, and small configuration/documentation typos.
+- Replaced unsafe `eval` in MQTT replay with `ast.literal_eval` and removed dead WSGI/runtime dependencies.
+- Made container dependency installation honor both Python and pnpm lockfiles, so the tested dependency set is the set shipped in the image.
+- Added regression coverage for lifecycle races, retries, per-filament checkpoints, MQTT dispatch, delta merging, G-code modes/retractions/totals, checkpoint compatibility, settings concurrency, AMS removal, and Spoolman validation.
+- Added Loki-friendly `event=... key=value` operational logs at `INFO` for service startup, MQTT connectivity, print lifecycle, model loading, layers, filament consumption, checkpoint recovery, AMS/RFID changes, and tray assignments. `DEBUG` adds MQTT summaries and timing; `TRACE` includes raw MQTT payloads.
+- Bounded Spoolman outage behavior to one failed consumption attempt per eligible status update and added exponential retry backoff, preventing a large layer backlog from multiplying 30-second network timeouts and blocking the MQTT dispatcher.
+- Tracked the printer's live `ams.tray_now` value and persisted layer-effective AMS mapping history, so an automatic refill charges completed layers to the original spool and later layers to the backup spool.
+- Parsed Bambu Studio's object-label G-code blocks and persisted `s_obj` skip state, excluding skipped-object extrusion while retaining shared startup, purge, and wipe usage. When MQTT omits a usable G-code line position, a mid-layer skip conservatively takes effect on the following layer.
+- Strengthened local-print identity with the print name. Checkpoints with generic `0`/missing task IDs are recovered only when the name matches, and recovery is retried when a later P-series delta supplies the missing identity.
+- Merged P-series nested AMS unit and tray deltas by stable `id` while continuing to replace ordinary lists, preventing a one-tray update from erasing cached state for every omitted tray or AMS unit.
+- Added regression coverage for bounded outage retries, refill mapping history, skipped-object accounting, ambiguous local checkpoints, delayed recovery identity, and nested P-series list deltas.
+- Added a durable consumption intent before every Spoolman mutation. After a timeout or restart, the tracker reconciles the spool's authoritative `used_length` against the saved baseline before deciding whether to retry, closing the normal post-accept/pre-checkpoint duplicate window.
+- Added a serialized internal retry timer with exponential backoff, so unfinished accounting—including a `FINISH` backlog—progresses without waiting for another MQTT status message.
+- Captured raw G-code extrusion events and used `mc_print_line_number` for exact within-layer skipped-object and AMS-refill attribution when the printer supplies a valid line position; printers reporting `0` retain the conservative layer-boundary fallback.
+- Applied `ams_exist_bits` and `tray_exist_bits` as authoritative removal masks after keyed P-series delta merging, so detached AMS units and removed trays cannot remain indefinitely in cached state.
+- Known boundary: Spoolman's API still has no idempotency key. The durable baseline reconciliation is exact when this application is the spool's only writer; a simultaneous external consumption large enough to cross the saved target is indistinguishable from this application's timed-out request and is resolved at-most-once to avoid double charging.
+- Known boundary: checkpoints created by an older release with generic task IDs and no saved print name cannot be matched safely to a local print. They remain intentionally quarantined rather than risking consumption against an unrelated job; all newly created checkpoints persist the required identity.
+
+Protocol references: [OpenBambuAPI MQTT notes](https://github.com/Doridian/OpenBambuAPI/blob/main/mqtt.md), [Bambu Studio source](https://github.com/bambulab/BambuStudio), and [Home Assistant Bambu Lab integration source](https://github.com/greghesp/ha-bambulab).
