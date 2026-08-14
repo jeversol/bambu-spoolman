@@ -416,6 +416,67 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
             [call("0", "0", None), call("0", "0", "Local Benchy")],
         )
 
+    def test_does_not_repeat_recovery_for_partial_finish_deltas(self):
+        self.tracker.active_model = None
+        self.tracker.gcode_state = None
+        self.tracker._attempt_print_resume = Mock()
+
+        self.tracker.on_message(
+            None,
+            {
+                "print": {
+                    "command": "push_status",
+                    "gcode_state": "FINISH",
+                    "task_id": "task-1",
+                    "subtask_id": "subtask-1",
+                }
+            },
+        )
+        self.tracker.on_message(None, {"print": {"command": "push_status"}})
+        self.tracker.on_message(None, {"print": {"command": "push_status"}})
+
+        self.tracker._attempt_print_resume.assert_called_once_with(
+            "task-1", "subtask-1", None
+        )
+
+    def test_new_recoverable_lifecycle_can_attempt_recovery_again(self):
+        self.tracker.active_model = None
+        self.tracker.gcode_state = None
+        self.tracker._attempt_print_resume = Mock()
+
+        finish = {
+            "print": {
+                "command": "push_status",
+                "gcode_state": "FINISH",
+                "task_id": "task-1",
+                "subtask_id": "subtask-1",
+            }
+        }
+        self.tracker.on_message(None, finish)
+        self.tracker.on_message(
+            None,
+            {"print": {"command": "push_status", "gcode_state": "PREPARE"}},
+        )
+        self.tracker.on_message(
+            None,
+            {
+                "print": {
+                    "command": "push_status",
+                    "gcode_state": "RUNNING",
+                    "task_id": "task-1",
+                    "subtask_id": "subtask-1",
+                }
+            },
+        )
+
+        self.assertEqual(
+            self.tracker._attempt_print_resume.call_args_list,
+            [
+                call("task-1", "subtask-1", None),
+                call("task-1", "subtask-1", None),
+            ],
+        )
+
     def test_does_not_finish_recovered_print_that_never_became_active(self):
         self.tracker.active_model = None
         self.tracker.gcode_state = None

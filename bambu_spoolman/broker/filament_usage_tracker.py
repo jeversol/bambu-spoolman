@@ -64,6 +64,7 @@ class FilamentUsageTracker:
         self.skipped_object_lines = {}
         self.spent_segments = {}
         self.pending_consumption = None
+        self._reset_checkpoint_recovery_guard()
         self._reset_spoolman_retry()
 
     def on_message(self, mqtt_handler, message):
@@ -79,6 +80,12 @@ class FilamentUsageTracker:
 
         previous_gcode_state = self.gcode_state
         self.gcode_state = print_obj.get("gcode_state", self.gcode_state)
+
+        if (
+            previous_gcode_state in RECOVERABLE_GCODE_STATES
+            and self.gcode_state not in RECOVERABLE_GCODE_STATES
+        ):
+            self._reset_checkpoint_recovery_guard()
 
         if previous_gcode_state != self.gcode_state:
             logger.info(
@@ -106,11 +113,7 @@ class FilamentUsageTracker:
             ):
                 # Recover before handling the current status. A recovered
                 # checkpoint records whether this print had actually started.
-                self._attempt_print_resume(
-                    print_obj.get("task_id"),
-                    print_obj.get("subtask_id"),
-                    _print_name(print_obj),
-                )
+                self._attempt_print_resume_once(print_obj)
 
             if (
                 self.active_model is not None
@@ -188,6 +191,7 @@ class FilamentUsageTracker:
 
     def _handle_print_start(self, print_obj):
         clear_checkpoint()
+        self._reset_checkpoint_recovery_guard()
         model_url = print_obj.get("url")
 
         self.active_model = None
@@ -470,6 +474,7 @@ class FilamentUsageTracker:
 
         task_id = self.task_id
         subtask_id = self.subtask_id
+        print_name = getattr(self, "print_name", None)
         total_layers = len(self.active_model or {})
         self.active_model = None
         self.ams_mapping = None
@@ -489,6 +494,19 @@ class FilamentUsageTracker:
         self.spent_segments = {}
         self.pending_consumption = None
         self._reset_spoolman_retry()
+
+        # The printer commonly continues sending FINISH deltas after a print
+        # has been fully accounted. Remember that identity so those deltas do
+        # not repeatedly probe for the checkpoint we just cleared.
+        self._recovery_task_id = task_id
+        self._recovery_subtask_id = subtask_id
+        self._recovery_print_name = print_name
+        self._last_checkpoint_recovery_key = (
+            self.gcode_state,
+            task_id,
+            subtask_id,
+            print_name,
+        )
 
         clear_checkpoint()
         logger.info(
@@ -1060,6 +1078,39 @@ class FilamentUsageTracker:
             self.print_started,
             self.using_ams,
         )
+
+    def _attempt_print_resume_once(self, print_obj):
+        task_id = _normalize_identifier(print_obj.get("task_id"))
+        subtask_id = _normalize_identifier(print_obj.get("subtask_id"))
+        print_name = _print_name(print_obj)
+
+        if task_id is not None:
+            self._recovery_task_id = task_id
+        if subtask_id is not None:
+            self._recovery_subtask_id = subtask_id
+        if print_name is not None:
+            self._recovery_print_name = print_name
+
+        recovery_key = (
+            self.gcode_state,
+            getattr(self, "_recovery_task_id", None),
+            getattr(self, "_recovery_subtask_id", None),
+            getattr(self, "_recovery_print_name", None),
+        )
+        if recovery_key == getattr(self, "_last_checkpoint_recovery_key", None):
+            return
+
+        # Record the attempt before doing I/O. A failed or unavailable
+        # checkpoint is final for this identity unless a later MQTT delta adds
+        # information, such as a P-series local print name.
+        self._last_checkpoint_recovery_key = recovery_key
+        self._attempt_print_resume(*recovery_key[1:])
+
+    def _reset_checkpoint_recovery_guard(self):
+        self._recovery_task_id = None
+        self._recovery_subtask_id = None
+        self._recovery_print_name = None
+        self._last_checkpoint_recovery_key = None
 
     def _mark_print_started(self):
         mark_print_started()

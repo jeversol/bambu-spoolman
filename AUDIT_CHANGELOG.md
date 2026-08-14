@@ -36,6 +36,7 @@
 - Added a serialized internal retry timer with exponential backoff, so unfinished accounting—including a `FINISH` backlog—progresses without waiting for another MQTT status message.
 - Captured raw G-code extrusion events and used `mc_print_line_number` for exact within-layer skipped-object and AMS-refill attribution when the printer supplies a valid line position; printers reporting `0` retain the conservative layer-boundary fallback.
 - Applied `ams_exist_bits` and `tray_exist_bits` as authoritative removal masks after keyed P-series delta merging, so detached AMS units and removed trays cannot remain indefinitely in cached state.
+- Deduplicated checkpoint recovery by effective print identity, preventing persistent `FINISH` status deltas from retrying a missing checkpoint every few seconds while still retrying when a later P-series delta supplies new identity data.
 - Known boundary: Spoolman's API still has no idempotency key. The durable baseline reconciliation is exact when this application is the spool's only writer; a simultaneous external consumption large enough to cross the saved target is indistinguishable from this application's timed-out request and is resolved at-most-once to avoid double charging.
 - Known boundary: checkpoints created by an older release with generic task IDs and no saved print name cannot be matched safely to a local print. They remain intentionally quarantined rather than risking consumption against an unrelated job; all newly created checkpoints persist the required identity.
 
