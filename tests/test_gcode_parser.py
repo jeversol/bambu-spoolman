@@ -101,6 +101,42 @@ G1 E10
 
         self.assertEqual(usage, {0: {0: 10.0}})
 
+    def test_tracks_object_usage_without_including_shared_extrusion(self):
+        gcode = """
+M620 S0
+M83
+G1 E2
+; start printing object, unique label id: 7
+G1 E3
+; stop printing object, unique label id: 7
+; start printing object, unique label id: 8
+G1 E5
+; stop printing object, unique label id: 8
+"""
+
+        usage = evaluate_gcode(gcode)
+
+        self.assertEqual(usage, {0: {0: 10.0}})
+        self.assertEqual(usage.for_layer(0, {7}), {0: 7.0})
+        self.assertEqual(usage.for_layer(0, {7, 8}), {0: 2.0})
+
+    def test_line_position_preserves_object_usage_before_skip(self):
+        gcode = """M620 S0
+M83
+; start printing object, unique label id: 7
+G1 E3
+G1 X1
+G1 E5
+; stop printing object, unique label id: 7
+"""
+
+        usage = evaluate_gcode(gcode)
+
+        self.assertEqual(
+            usage.for_layer(0, skipped_object_lines={7: 5}),
+            {0: 3.0},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

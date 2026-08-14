@@ -3,7 +3,11 @@ import struct
 import unittest
 from unittest.mock import Mock, call, patch
 
-from bambu_spoolman.bambu_mqtt import MqttHandler, recursive_merge
+from bambu_spoolman.bambu_mqtt import (
+    MqttHandler,
+    StatefulPrinterInfo,
+    recursive_merge,
+)
 
 
 class RecursiveMergeTests(unittest.TestCase):
@@ -13,6 +17,53 @@ class RecursiveMergeTests(unittest.TestCase):
         recursive_merge(existing, {"print": {"ams": {"ams": []}}})
 
         self.assertEqual(existing, {"print": {"ams": {"ams": []}}})
+
+    def test_merges_partial_ams_and_tray_lists_by_id(self):
+        existing = {
+            "print": {
+                "ams": {
+                    "ams": [
+                        {
+                            "id": "0",
+                            "humidity": "3",
+                            "tray": [
+                                {"id": "0", "tray_type": "PLA"},
+                                {"id": "1", "tray_type": "PETG"},
+                            ],
+                        },
+                        {"id": "1", "humidity": "4", "tray": []},
+                    ]
+                }
+            }
+        }
+        delta = {
+            "print": {
+                "ams": {
+                    "ams": [
+                        {
+                            "id": 0,
+                            "tray": [{"id": 1, "tray_type": "ABS"}],
+                        }
+                    ]
+                }
+            }
+        }
+
+        recursive_merge(existing, delta)
+
+        units = existing["print"]["ams"]["ams"]
+        self.assertEqual(len(units), 2)
+        self.assertEqual(units[0]["humidity"], "3")
+        self.assertEqual(units[0]["tray"][0]["tray_type"], "PLA")
+        self.assertEqual(units[0]["tray"][1]["tray_type"], "ABS")
+        self.assertEqual(units[1]["humidity"], "4")
+
+    def test_non_keyed_lists_are_replaced(self):
+        existing = {"print": {"s_obj": [1, 2]}}
+
+        recursive_merge(existing, {"print": {"s_obj": [3]}})
+
+        self.assertEqual(existing["print"]["s_obj"], [3])
 
 
 class MqttHandlerRecoveryTests(unittest.TestCase):
@@ -92,6 +143,42 @@ class MqttHandlerRecoveryTests(unittest.TestCase):
         handler._on_message(None, None, message)
 
         self.assertTrue(handler.message_queue.empty())
+
+
+class StatefulPrinterInfoTests(unittest.TestCase):
+    def test_presence_masks_remove_stale_units_and_trays(self):
+        printer = StatefulPrinterInfo()
+        printer.update_tray_count = Mock()
+        printer.handle_message(
+            None,
+            {
+                "print": {
+                    "command": "push_status",
+                    "ams": {
+                        "ams": [
+                            {
+                                "id": "0",
+                                "tray": [{"id": "0"}, {"id": "1"}],
+                            },
+                            {"id": "1", "tray": [{"id": "0"}]},
+                        ]
+                    },
+                }
+            },
+        )
+
+        printer.handle_message(
+            None,
+            {
+                "print": {
+                    "command": "push_status",
+                    "ams": {"ams_exist_bits": "1", "tray_exist_bits": "1"},
+                }
+            },
+        )
+
+        units = printer.get_info()["print"]["ams"]["ams"]
+        self.assertEqual(units, [{"id": "0", "tray": [{"id": "0"}]}])
 
 
 if __name__ == "__main__":

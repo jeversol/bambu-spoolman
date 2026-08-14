@@ -16,8 +16,38 @@ def recursive_merge(dict1, dict2):
     for key, value in dict2.items():
         if key in dict1 and isinstance(dict1[key], dict) and isinstance(value, dict):
             recursive_merge(dict1[key], value)
+        elif (
+            key in dict1
+            and isinstance(dict1[key], list)
+            and isinstance(value, list)
+            and value
+            and _is_keyed_object_list(dict1[key])
+            and _is_keyed_object_list(value)
+        ):
+            _merge_keyed_object_list(dict1[key], value)
         else:
             dict1[key] = value
+
+
+def _is_keyed_object_list(value):
+    return all(isinstance(item, dict) and "id" in item for item in value)
+
+
+def _merge_keyed_object_list(existing, delta):
+    """Merge P-series list deltas by their stable object IDs.
+
+    P-series printers commonly send only the AMS unit or tray which changed.
+    Replacing the entire list loses every omitted unit/tray. Empty lists remain
+    authoritative and are handled by ``recursive_merge`` as replacements.
+    """
+    existing_by_id = {str(item["id"]): item for item in existing}
+    for item in delta:
+        item_id = str(item["id"])
+        if item_id in existing_by_id:
+            recursive_merge(existing_by_id[item_id], item)
+        else:
+            existing.append(item)
+            existing_by_id[item_id] = item
 
 
 class StatefulPrinterInfo:
@@ -40,6 +70,11 @@ class StatefulPrinterInfo:
         # Merge the new info with the old info
         with self._lock:
             recursive_merge(self._info, message)
+            raw_ams = print_status.get("ams")
+            if isinstance(raw_ams, dict):
+                _prune_ams_by_presence(
+                    self._info.get("print", {}).get("ams", {}), raw_ams
+                )
             self.last_update = int(time.time())
             tray_count = (
                 len(self._info.get("print", {}).get("ams", {}).get("ams", [])) * 4
@@ -79,6 +114,57 @@ class StatefulPrinterInfo:
 
 
 stateful_printer_info = StatefulPrinterInfo()
+
+
+def _prune_ams_by_presence(merged_ams, raw_ams):
+    units = merged_ams.get("ams")
+    if not isinstance(units, list):
+        return
+
+    if "ams_exist_bits" in raw_ams:
+        ams_bits = _presence_bits(raw_ams.get("ams_exist_bits"))
+        if ams_bits is not None:
+            units[:] = [unit for unit in units if _bit_is_set(ams_bits, unit.get("id"))]
+
+    if "tray_exist_bits" in raw_ams:
+        tray_bits = _presence_bits(raw_ams.get("tray_exist_bits"))
+        if tray_bits is not None:
+            for unit in units:
+                trays = unit.get("tray")
+                if not isinstance(trays, list):
+                    continue
+                try:
+                    unit_id = int(unit.get("id"))
+                except (TypeError, ValueError):
+                    continue
+                trays[:] = [
+                    tray
+                    for tray in trays
+                    if _tray_bit_is_set(tray_bits, unit_id, tray.get("id"))
+                ]
+
+
+def _presence_bits(value):
+    try:
+        return value if isinstance(value, int) else int(str(value), 16)
+    except (TypeError, ValueError):
+        logger.warning("Ignoring invalid AMS presence bitmask: {}", value)
+        return None
+
+
+def _bit_is_set(bits, index):
+    try:
+        return bool(bits & (1 << int(index)))
+    except (TypeError, ValueError):
+        return True
+
+
+def _tray_bit_is_set(bits, unit_id, tray_id):
+    try:
+        return _bit_is_set(bits, unit_id * 4 + int(tray_id))
+    except (TypeError, ValueError):
+        return True
+
 
 MAX_BACKOFF_DURATION = 60
 

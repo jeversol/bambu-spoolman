@@ -1,5 +1,6 @@
 import os
 import tempfile
+import threading
 import unittest
 import zipfile
 from unittest.mock import Mock, call, patch
@@ -7,6 +8,8 @@ from unittest.mock import Mock, call, patch
 import requests
 
 from bambu_spoolman.broker.filament_usage_tracker import FilamentUsageTracker
+from bambu_spoolman.gcode.parser import evaluate_gcode
+from bambu_spoolman.settings import EXTERNAL_SPOOL_ID
 
 
 class FilamentUsageTrackerLayerTests(unittest.TestCase):
@@ -70,6 +73,7 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
         self.tracker._handle_layer_change(1)
         self.assertNotIn(0, self.tracker.spent_layers)
 
+        self.tracker.spoolman_retry_at = 0
         self.tracker.current_layer = 2
         self.tracker._handle_layer_change(2)
 
@@ -79,6 +83,36 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
             self.tracker._spend_filament_for_layer.call_args_list,
             [call(0), call(0), call(1)],
         )
+
+    @patch("bambu_spoolman.broker.filament_usage_tracker.update_layer")
+    def test_outage_attempts_only_one_pending_layer_before_backoff(self, update_layer):
+        self.tracker.active_model = {layer: {0: 1} for layer in range(100)}
+        self.tracker._spend_filament_for_layer.side_effect = RuntimeError(
+            "Spoolman unavailable"
+        )
+
+        self.tracker._handle_layer_change(100)
+        self.tracker._handle_layer_change(101)
+
+        self.tracker._spend_filament_for_layer.assert_called_once_with(0)
+        self.assertGreater(self.tracker.spoolman_retry_at, 0)
+
+    @patch("bambu_spoolman.broker.filament_usage_tracker.threading.Timer")
+    def test_retry_timer_progresses_without_another_mqtt_status(self, timer):
+        retry_timer = Mock()
+        timer.return_value = retry_timer
+        self.tracker._lock = threading.RLock()
+        self.tracker._retry_timer = None
+        self.tracker.gcode_state = "RUNNING"
+        self.tracker.current_layer = 2
+        self.tracker._handle_layer_change = Mock()
+
+        self.tracker._schedule_spoolman_retry(0, "unavailable")
+        timer_callback = timer.call_args.args[1]
+        timer_callback()
+
+        retry_timer.start.assert_called_once_with()
+        self.tracker._handle_layer_change.assert_called_once_with(2)
 
     @patch("bambu_spoolman.broker.filament_usage_tracker.update_layer")
     @patch("bambu_spoolman.broker.filament_usage_tracker.load_settings")
@@ -104,6 +138,7 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
         self.assertEqual(self.tracker.spent_filaments, {0: {0}})
         self.assertNotIn(0, self.tracker.spent_layers)
 
+        self.tracker.spoolman_retry_at = 0
         self.tracker.current_layer = 1
         self.tracker._handle_layer_change(1)
 
@@ -162,6 +197,7 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
         self.assertIsNotNone(self.tracker.active_model)
         clear_checkpoint.assert_not_called()
 
+        self.tracker.spoolman_retry_at = 0
         self.tracker.on_message(None, finish_message)
 
         self.assertIsNone(self.tracker.active_model)
@@ -169,7 +205,7 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
         clear_checkpoint.assert_called_once_with()
         self.assertEqual(
             self.tracker._spend_filament_for_layer.call_args_list,
-            [call(0), call(1), call(0)],
+            [call(0), call(0), call(1)],
         )
 
     def test_stale_finish_does_not_consume_or_end_new_print(self):
@@ -289,6 +325,21 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
 
         self.tracker._handle_print_start.assert_not_called()
 
+    def test_generic_local_ids_do_not_make_a_different_print_a_duplicate(self):
+        self.tracker.task_id = "0"
+        self.tracker.subtask_id = "0"
+        self.tracker.print_name = "Old Print"
+
+        current = self.tracker._is_current_print(
+            {
+                "task_id": "0",
+                "subtask_id": "0",
+                "subtask_name": "New Print",
+            }
+        )
+
+        self.assertFalse(current)
+
     def test_invalid_layer_number_is_ignored(self):
         self.tracker.gcode_state = "RUNNING"
         self.tracker.current_layer = 2
@@ -327,9 +378,43 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
         self.tracker.on_message(None, finish_message)
 
         self.tracker._attempt_print_resume.assert_called_once_with(
-            "task-1", "subtask-1"
+            "task-1", "subtask-1", None
         )
         self.tracker._handle_print_end.assert_called_once_with()
+
+    def test_retries_recovery_when_later_delta_supplies_local_print_name(self):
+        self.tracker.active_model = None
+        self.tracker.gcode_state = None
+        self.tracker._attempt_print_resume = Mock()
+
+        self.tracker.on_message(
+            None,
+            {
+                "print": {
+                    "command": "push_status",
+                    "gcode_state": "RUNNING",
+                    "task_id": "0",
+                    "subtask_id": "0",
+                }
+            },
+        )
+        self.tracker.on_message(
+            None,
+            {
+                "print": {
+                    "command": "push_status",
+                    "gcode_state": "RUNNING",
+                    "task_id": "0",
+                    "subtask_id": "0",
+                    "subtask_name": "Local Benchy",
+                }
+            },
+        )
+
+        self.assertEqual(
+            self.tracker._attempt_print_resume.call_args_list,
+            [call("0", "0", None), call("0", "0", "Local Benchy")],
+        )
 
     def test_does_not_finish_recovered_print_that_never_became_active(self):
         self.tracker.active_model = None
@@ -353,7 +438,9 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
 
         self.tracker.on_message(None, finish_message)
 
-        self.tracker._attempt_print_resume.assert_called_once_with("task-1", "task-1")
+        self.tracker._attempt_print_resume.assert_called_once_with(
+            "task-1", "task-1", None
+        )
         self.tracker._handle_print_end.assert_not_called()
 
     @patch("bambu_spoolman.broker.filament_usage_tracker.recover_model")
@@ -377,6 +464,158 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
         self.assertEqual(self.tracker.spent_layers, {0, 2, 5})
         self.assertEqual(self.tracker.spent_filaments, {5: {0, 1}})
         self.assertEqual(self.tracker.current_layer, 5)
+
+    @patch("bambu_spoolman.broker.filament_usage_tracker.update_layer")
+    @patch("bambu_spoolman.broker.filament_usage_tracker.load_settings")
+    def test_auto_refill_uses_new_tray_only_for_later_layers(
+        self, load_settings, update_layer
+    ):
+        self.tracker.active_model = {
+            0: {0: 10},
+            1: {0: 20},
+            2: {0: 30},
+        }
+        self.tracker.using_ams = True
+        self.tracker.ams_mapping = [0]
+        self.tracker.ams_mapping_history = [{"layer": 0, "mapping": [0]}]
+        self.tracker.active_logical_filament = None
+        self.tracker.last_active_tray = None
+        self.tracker.skipped_object_layers = {}
+        self.tracker.spoolman_client = Mock()
+        self.tracker._spend_filament_for_layer = (
+            FilamentUsageTracker._spend_filament_for_layer.__get__(self.tracker)
+        )
+        load_settings.return_value = {"trays": {"0": 10, "1": 11}}
+
+        self.tracker._update_active_ams_tray({"ams": {"tray_now": "0"}}, 0)
+        self.tracker._update_active_ams_tray({"ams": {"tray_now": "1"}}, 2)
+        self.tracker._spend_filament_for_layer(1)
+        self.tracker._spend_filament_for_layer(2)
+
+        self.assertEqual(self.tracker._mapping_for_layer(1), [0])
+        self.assertEqual(self.tracker._mapping_for_layer(2), [1])
+        self.assertEqual(
+            self.tracker.spoolman_client.consume_spool.call_args_list,
+            [call(10, length=20), call(11, length=30)],
+        )
+
+    def test_line_position_splits_refill_usage_within_a_layer(self):
+        self.tracker.active_model = evaluate_gcode(
+            """M620 S0
+M83
+G1 E2
+G1 X1
+G1 E3
+"""
+        )
+        self.tracker.using_ams = True
+        self.tracker.ams_mapping = [1]
+        self.tracker.ams_mapping_history = [
+            {"layer": 0, "mapping": [0]},
+            {"layer": 0, "line": 4, "mapping": [1]},
+        ]
+
+        groups = self.tracker._segment_usage_for_layer(
+            0,
+            self.tracker.active_model.for_layer(0),
+            set(),
+            {},
+        )
+
+        self.assertEqual(groups, {(0, 0): 2.0, (0, 1): 3.0})
+
+    @patch("bambu_spoolman.broker.filament_usage_tracker.update_layer")
+    @patch("bambu_spoolman.broker.filament_usage_tracker.load_settings")
+    def test_reconciles_timed_out_consumption_without_duplicate_request(
+        self, load_settings, update_layer
+    ):
+        self.tracker.active_model = {0: {0: 10}}
+        self.tracker.using_ams = False
+        self.tracker.ams_mapping = None
+        self.tracker.ams_mapping_history = []
+        self.tracker.active_logical_filament = None
+        self.tracker.last_active_tray = None
+        self.tracker.skipped_object_layers = {}
+        self.tracker.skipped_object_lines = {}
+        self.tracker.spent_segments = {}
+        self.tracker.pending_consumption = None
+        self.tracker._spend_filament_for_layer = (
+            FilamentUsageTracker._spend_filament_for_layer.__get__(self.tracker)
+        )
+        self.tracker.spoolman_client = Mock()
+        self.tracker.spoolman_client.get_spool.side_effect = [
+            {"used_length": 100},
+            {"used_length": 110},
+        ]
+        self.tracker.spoolman_client.consume_spool.side_effect = TimeoutError(
+            "response lost"
+        )
+        load_settings.return_value = {"trays": {str(EXTERNAL_SPOOL_ID): 99}}
+
+        self.tracker._handle_layer_change(1)
+        self.tracker.spoolman_retry_at = 0
+        self.tracker._handle_layer_change(1)
+
+        self.tracker.spoolman_client.consume_spool.assert_called_once_with(
+            99, length=10
+        )
+        self.assertIn(0, self.tracker.spent_layers)
+        self.assertIsNone(self.tracker.pending_consumption)
+
+    def test_prepare_status_cannot_remap_print_to_previously_loaded_tray(self):
+        self.tracker.active_model = {0: {0: 10}}
+        self.tracker.using_ams = True
+        self.tracker.ams_mapping = [0]
+        self.tracker.ams_mapping_history = [{"layer": 0, "mapping": [0]}]
+        self.tracker.active_logical_filament = None
+        self.tracker.last_active_tray = None
+        self.tracker.print_started = False
+
+        changed = self.tracker._update_active_ams_tray({"ams": {"tray_now": "3"}}, 0)
+
+        self.assertFalse(changed)
+        self.assertEqual(self.tracker.ams_mapping, [0])
+        self.assertEqual(
+            self.tracker.ams_mapping_history,
+            [{"layer": 0, "mapping": [0]}],
+        )
+
+    @patch("bambu_spoolman.broker.filament_usage_tracker.update_layer")
+    @patch("bambu_spoolman.broker.filament_usage_tracker.load_settings")
+    def test_skipped_object_excludes_only_its_object_extrusion(
+        self, load_settings, update_layer
+    ):
+        self.tracker.active_model = evaluate_gcode(
+            """
+M620 S0
+M83
+G1 E2
+; start printing object, unique label id: 7
+G1 E3
+; stop printing object, unique label id: 7
+; start printing object, unique label id: 8
+G1 E5
+; stop printing object, unique label id: 8
+"""
+        )
+        self.tracker.using_ams = False
+        self.tracker.ams_mapping = None
+        self.tracker.ams_mapping_history = []
+        self.tracker.active_logical_filament = None
+        self.tracker.last_active_tray = None
+        self.tracker.skipped_object_layers = {7: 0}
+        self.tracker.spoolman_client = Mock()
+        self.tracker._spend_filament_for_layer = (
+            FilamentUsageTracker._spend_filament_for_layer.__get__(self.tracker)
+        )
+        load_settings.return_value = {"trays": {str(EXTERNAL_SPOOL_ID): 99}}
+
+        spent = self.tracker._spend_filament_for_layer(0)
+
+        self.assertTrue(spent)
+        self.tracker.spoolman_client.consume_spool.assert_called_once_with(
+            99, length=7.0
+        )
 
     @patch("bambu_spoolman.broker.filament_usage_tracker.requests.get")
     def test_model_download_uses_configured_timeout(self, get):

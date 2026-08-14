@@ -35,6 +35,7 @@ class CheckpointRecoveryTests(unittest.TestCase):
         spent_layers=(0, 1, 3),
         spent_filaments=None,
         print_started=True,
+        print_name="Benchy",
     ):
         if spent_filaments is None:
             spent_filaments = {0: (0,), 1: (0, 1)}
@@ -49,6 +50,7 @@ class CheckpointRecoveryTests(unittest.TestCase):
             gcode_file_name="plate_1.gcode",
             using_ams=True,
             print_started=print_started,
+            print_name=print_name,
         )
 
     def test_recovers_when_status_omits_task_identifiers(self):
@@ -65,12 +67,26 @@ class CheckpointRecoveryTests(unittest.TestCase):
 
         self.assertFalse(os.path.exists(checkpoint_path))
 
-    def test_recovers_when_checkpoint_also_has_no_task_identifiers(self):
+    def test_rejects_ambiguous_checkpoint_without_current_print_name(self):
         self.save_checkpoint(task_id=None, subtask_id=None)
 
         result = recover_model(None, None)
 
+        self.assertIsNone(result)
+
+    def test_recovers_local_checkpoint_with_matching_print_name(self):
+        self.save_checkpoint(task_id=0, subtask_id=0, print_name="Local Benchy")
+
+        result = recover_model("0", "0", "Local Benchy")
+
         self.assertIsNotNone(result)
+
+    def test_rejects_local_checkpoint_for_a_different_print(self):
+        self.save_checkpoint(task_id=0, subtask_id=0, print_name="Old Print")
+
+        result = recover_model("0", "0", "New Print")
+
+        self.assertIsNone(result)
 
     def test_recovers_when_status_has_blank_task_identifiers(self):
         self.save_checkpoint()
@@ -113,6 +129,52 @@ class CheckpointRecoveryTests(unittest.TestCase):
         result = recover_model("task-1", "subtask-1")
 
         self.assertFalse(result[7])
+
+    def test_recovers_refill_and_skipped_object_state(self):
+        save_checkpoint(
+            model_path=self.model_path,
+            current_layer=12,
+            spent_layers={0},
+            spent_filaments={},
+            task_id="task-1",
+            subtask_id="subtask-1",
+            ams_mapping=[1],
+            gcode_file_name="plate_1.gcode",
+            using_ams=True,
+            print_started=True,
+            print_name="Benchy",
+            ams_mapping_history=[
+                {"layer": 0, "mapping": [0]},
+                {"layer": 8, "mapping": [1]},
+            ],
+            active_logical_filament=0,
+            last_active_tray=1,
+            skipped_object_layers={7: 9},
+            skipped_object_lines={7: 1234},
+            spent_segments={8: {"0:0"}},
+            pending_consumption={
+                "layer": 9,
+                "segment_key": "0:1",
+                "spool_id": 42,
+                "length": 10,
+                "baseline_used_length": 100,
+            },
+        )
+
+        result = recover_model("task-1", "subtask-1", "Benchy")
+
+        self.assertEqual(
+            result[11],
+            [
+                {"layer": 0, "mapping": [0]},
+                {"layer": 8, "mapping": [1]},
+            ],
+        )
+        self.assertEqual(result[12:14], (0, 1))
+        self.assertEqual(result[14], {7: 9})
+        self.assertEqual(result[15], {7: 1234})
+        self.assertEqual(result[16], {8: ["0:0"]})
+        self.assertEqual(result[17]["segment_key"], "0:1")
 
     def test_marks_checkpoint_print_as_started(self):
         self.save_checkpoint(print_started=False)
