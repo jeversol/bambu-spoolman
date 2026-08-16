@@ -7,6 +7,7 @@ import {
   normalizeColorHex,
   toDashboardSpool,
 } from "@/lib/dashboard";
+import { supportsTrayLocking } from "@/lib/features";
 import {
   getPrinterSettings,
   getPrinterTray,
@@ -36,11 +37,14 @@ function SkeletonPage() {
 async function HomePage() {
   await headers();
 
-  const [settings, printerSettings, rawSpools] = await Promise.all([
-    getSettings(),
-    getPrinterSettings(),
-    getAllSpools(),
-  ]);
+  const [settings, printerSettings, rawSpools, rfidEnabled] = await Promise.all(
+    [
+      getSettings(),
+      getPrinterSettings(),
+      getAllSpools(),
+      supportsTrayLocking(),
+    ],
+  );
   const spools = rawSpools.map(toDashboardSpool);
   const spoolsById = new Map(spools.map((spool) => [spool.id, spool]));
   const assignedTrayIds = Object.keys(settings.trays)
@@ -84,7 +88,7 @@ async function HomePage() {
       const location =
         numericTrayId === 255
           ? "external holder"
-          : `AMS ${Math.floor(numericTrayId / 4) + 1} · Tray ${(numericTrayId % 4) + 1}`;
+          : `AMS ${Math.floor(numericTrayId / 4) + 1} · Slot ${(numericTrayId % 4) + 1}`;
       return [Number(spoolId), location];
     }),
   );
@@ -92,6 +96,7 @@ async function HomePage() {
   return (
     <SpoolMappingDashboard
       connected={printerSettings !== null}
+      rfidEnabled={rfidEnabled}
       trays={trays}
       externalSpool={spoolsById.get(settings.trays[255]) ?? null}
       spools={spools}

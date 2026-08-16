@@ -83,7 +83,7 @@ export function SpoolAssignmentDialog({
   const targetId = target.id;
   const location = target.external
     ? "external spool holder"
-    : `AMS ${target.amsNumber} · Tray ${target.trayNumber}`;
+    : `AMS ${target.amsNumber} · Slot ${target.trayNumber}`;
   const isPreconfiguration = !target.external && target.occupied === false;
   const title = target.spool
     ? target.external

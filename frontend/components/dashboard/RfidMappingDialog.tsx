@@ -6,7 +6,11 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button, ButtonLoading } from "@/components/ui/button";
 import type { DashboardTray } from "@/lib/dashboard";
-import { overrideRfidMapping, unlinkRfidMapping } from "./actions";
+import {
+  linkRfidMapping,
+  overrideRfidMapping,
+  unlinkRfidMapping,
+} from "./actions";
 
 type Props = {
   tray: DashboardTray;
@@ -52,6 +56,28 @@ export function RfidMappingDialog({ tray, onClose }: Props) {
     });
   }
 
+  function linkTag() {
+    if (!tray.spool || !tray.rfidTag) return;
+    const spoolId = tray.spool.id;
+    const rfidTag = tray.rfidTag;
+
+    setError(null);
+    setPendingAction(null);
+    startTransition(async () => {
+      const result = await linkRfidMapping(spoolId, rfidTag);
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+
+      dialogRef.current?.close();
+      onClose();
+      router.refresh();
+    });
+  }
+
+  const linked = tray.locked;
+
   return (
     <dialog
       ref={dialogRef}
@@ -85,15 +111,16 @@ export function RfidMappingDialog({ tray, onClose }: Props) {
             id="rfid-dialog-title"
             className="mt-4 text-xl font-semibold tracking-tight"
           >
-            RFID controls this mapping
+            {linked ? "RFID controls this mapping" : "Link this RFID spool"}
           </h2>
           <p className="mt-1.5 text-sm leading-6 text-muted-foreground">
-            AMS {tray.amsNumber} · Tray {tray.trayNumber} is automatically mapped
-            to spool #{tray.spool?.id} whenever this tag is detected.
+            {linked
+              ? `AMS ${tray.amsNumber} · Slot ${tray.trayNumber} is automatically mapped to spool #${tray.spool?.id} whenever this tag is detected.`
+              : `The printer detected a Bambu Lab RFID tag in AMS ${tray.amsNumber} · Slot ${tray.trayNumber}, but it is not linked to spool #${tray.spool?.id} yet.`}
           </p>
 
           <div className="mt-5 rounded-xl bg-muted/60 p-3.5 text-sm">
-            Linked to{" "}
+            {linked ? "Linked to" : "Ready to link to"}{" "}
             <strong>
               spool #{tray.spool?.id} · {tray.spool?.name}
             </strong>
@@ -102,25 +129,27 @@ export function RfidMappingDialog({ tray, onClose }: Props) {
             </code>
           </div>
 
-          <div className="mt-4 rounded-xl border border-destructive/35 bg-destructive/10 p-3.5">
-            <strong className="text-sm">Remove the RFID association</strong>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              Future insertions of this tag will no longer select spool #
-              {tray.spool?.id} automatically.
-            </p>
-            <Button
-              type="button"
-              variant="destructive"
-              className="mt-3 h-11 sm:h-9"
-              disabled={isPending}
-              onClick={() => runAction("unlink")}
-            >
-              <ButtonLoading
-                loading={pendingAction === "unlink" && isPending}
-              />
-              Unlink permanently
-            </Button>
-          </div>
+          {linked && (
+            <div className="mt-4 rounded-xl border border-destructive/35 bg-destructive/10 p-3.5">
+              <strong className="text-sm">Remove the RFID association</strong>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                Future insertions of this tag will no longer select spool #
+                {tray.spool?.id} automatically.
+              </p>
+              <Button
+                type="button"
+                variant="destructive"
+                className="mt-3 h-11 sm:h-9"
+                disabled={isPending}
+                onClick={() => runAction("unlink")}
+              >
+                <ButtonLoading
+                  loading={pendingAction === "unlink" && isPending}
+                />
+                Unlink permanently
+              </Button>
+            </div>
+          )}
 
           {error && (
             <Alert variant="destructive" className="mt-4">
@@ -138,19 +167,31 @@ export function RfidMappingDialog({ tray, onClose }: Props) {
             disabled={isPending}
             onClick={onClose}
           >
-            Keep automatic mapping
+            {linked ? "Keep automatic mapping" : "Cancel"}
           </Button>
-          <Button
-            type="button"
-            className="h-11 sm:h-9"
-            disabled={isPending}
-            onClick={() => runAction("override")}
-          >
-            <ButtonLoading
-              loading={pendingAction === "override" && isPending}
-            />
-            Override until spool is removed
-          </Button>
+          {linked ? (
+            <Button
+              type="button"
+              className="h-11 sm:h-9"
+              disabled={isPending}
+              onClick={() => runAction("override")}
+            >
+              <ButtonLoading
+                loading={pendingAction === "override" && isPending}
+              />
+              Override until spool is removed
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              className="h-11 sm:h-9"
+              disabled={isPending}
+              onClick={linkTag}
+            >
+              <ButtonLoading loading={isPending} />
+              Link spool to RFID
+            </Button>
+          )}
         </div>
       </div>
     </dialog>

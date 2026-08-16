@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Spool Mapping",
-  description: "Map printer trays to filament inventory",
+  description: "Map printer slots to filament inventory",
 };
 
 const themeScript = `

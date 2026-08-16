@@ -79,7 +79,7 @@ async function RfidSettings({ trayId }: RfidProps) {
       <CardContent>
         <p className="text-foreground">
           A spool with an RFID tag is detected. If you want to automatically
-          assign this spool to the tray when it&apos;s inserted, click the
+          assign this spool to the slot when it&apos;s inserted, click the
           button below.
         </p>
         <div className="mt-2 block">
@@ -118,7 +118,7 @@ async function TrayPage(props: Props) {
           <BreadcrumbSeparator />
           <BreadcrumbItem>AMS {amsId + 1}</BreadcrumbItem>
           <BreadcrumbSeparator />
-          <BreadcrumbItem>Tray {(rawTrayId % 4) + 1}</BreadcrumbItem>
+          <BreadcrumbItem>Slot {(rawTrayId % 4) + 1}</BreadcrumbItem>
         </BreadcrumbList>
       </Breadcrumb>
       <Card className="mt-6">

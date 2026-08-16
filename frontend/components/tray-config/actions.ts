@@ -33,7 +33,7 @@ export async function updateTrayAssignment(
     }
 
     return {
-      error: `This spool is already assigned to Spool ${(Number(conflictTrayId) % 4) + 1} in AMS ${Math.floor(Number(conflictTrayId) / 4) + 1}`,
+      error: `This spool is already assigned to Slot ${(Number(conflictTrayId) % 4) + 1} in AMS ${Math.floor(Number(conflictTrayId) / 4) + 1}`,
     };
   }
 

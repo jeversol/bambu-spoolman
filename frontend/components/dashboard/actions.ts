@@ -7,6 +7,21 @@ export type RfidActionResult = {
   error: string | null;
 };
 
+export async function linkRfidMapping(
+  spoolId: number,
+  uuid: string,
+): Promise<RfidActionResult> {
+  try {
+    await grpcClient.setTrayUUID({ spoolId, uuid });
+    revalidateTag("settings", "max");
+    return { error: null };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : "Could not link RFID tag",
+    };
+  }
+}
+
 export async function overrideRfidMapping(
   trayId: number,
   uuid: string,

@@ -9,11 +9,15 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { RfidMappingDialog } from "./RfidMappingDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import type { DashboardSpool, DashboardTray } from "@/lib/dashboard";
+import {
+  type DashboardSpool,
+  type DashboardTray,
+  describeColorHex,
+} from "@/lib/dashboard";
 import { cn } from "@/lib/utils";
+import { RfidMappingDialog } from "./RfidMappingDialog";
 import {
   type AssignmentTarget,
   SpoolAssignmentDialog,
@@ -21,6 +25,7 @@ import {
 
 type Props = {
   connected: boolean;
+  rfidEnabled: boolean;
   trays: DashboardTray[];
   externalSpool: DashboardSpool | null;
   spools: DashboardSpool[];
@@ -90,10 +95,12 @@ function SpoolMeter({ spool }: { spool: DashboardSpool | null }) {
 
 function TrayCard({
   tray,
+  rfidEnabled,
   onAssign,
   onRfidDetails,
 }: {
   tray: DashboardTray;
+  rfidEnabled: boolean;
   onAssign: (tray: DashboardTray) => void;
   onRfidDetails: (tray: DashboardTray) => void;
 }) {
@@ -102,6 +109,7 @@ function TrayCard({
   const displayName = tray.printerName || tray.spool?.name;
   const filamentColor = tray.printerColorHex || tray.spool?.colorHex;
   const canManageRfid = Boolean(tray.rfidTag && tray.spool);
+  const printerColorName = describeColorHex(tray.printerColorHex);
   return (
     <article
       className={cn(
@@ -112,11 +120,15 @@ function TrayCard({
     >
       <div className="flex items-center justify-between gap-2 px-4 pb-2 pt-4">
         <span className="text-xs font-bold uppercase tracking-widest">
-          Tray {tray.trayNumber}
+          Slot {tray.trayNumber}
         </span>
         {tray.locked ? (
           <Badge className="border-0 bg-primary/12 text-primary hover:bg-primary/12">
             <LockKeyhole /> RFID linked
+          </Badge>
+        ) : tray.rfidTag ? (
+          <Badge className="border-0 bg-sky-500/15 text-sky-800 hover:bg-sky-500/15 dark:text-sky-300">
+            RFID detected
           </Badge>
         ) : needsMapping ? (
           <Badge className="border-0 bg-amber-500/15 text-amber-800 hover:bg-amber-500/15 dark:text-amber-300">
@@ -146,14 +158,23 @@ function TrayCard({
               title={`Filament color ${filamentColor}`}
             />
           )}
-          {displayName || (isEmpty ? "No spool detected" : "Filament unknown")}
+          {tray.printerName
+            ? `Bambu Lab ${tray.printerName}`
+            : displayName ||
+              (isEmpty ? "No spool detected" : "Filament unknown")}
         </p>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">
-          {tray.printerName
-            ? "Reported by printer"
-            : isEmpty
-              ? "Assign a spool now or wait until one is inserted."
-              : "Printer details unavailable"}
+          {tray.rfidTag && !tray.locked
+            ? `${printerColorName ? `${printerColorName} · ` : ""}${
+                rfidEnabled
+                  ? "RFID detected, not linked to Spoolman"
+                  : "RFID detected · automatic mapping not configured"
+              }`
+            : tray.printerName
+              ? `${printerColorName ? `${printerColorName} · ` : ""}Reported by printer`
+              : isEmpty
+                ? "Assign a spool now or wait until one is inserted."
+                : "Printer details unavailable"}
         </p>
 
         <div
@@ -176,14 +197,14 @@ function TrayCard({
         </div>
       </div>
 
-      {tray.locked ? (
+      {tray.locked || (rfidEnabled && canManageRfid) ? (
         <Button
           variant="outline"
           className="mx-4 mb-4 mt-4 h-11 sm:h-9"
           disabled={!canManageRfid}
           onClick={() => onRfidDetails(tray)}
         >
-          {canManageRfid ? "View RFID mapping" : "RFID details unavailable"}
+          {tray.locked ? "View RFID mapping" : "Link spool to RFID"}
         </Button>
       ) : (
         <Button
@@ -200,6 +221,7 @@ function TrayCard({
 
 export function SpoolMappingDashboard({
   connected,
+  rfidEnabled,
   trays,
   externalSpool,
   spools,
@@ -208,9 +230,7 @@ export function SpoolMappingDashboard({
   const [assignmentTarget, setAssignmentTarget] =
     useState<AssignmentTarget | null>(null);
   const [rfidTarget, setRfidTarget] = useState<DashboardTray | null>(null);
-  useDashboardAutoRefresh(
-    assignmentTarget !== null || rfidTarget !== null,
-  );
+  useDashboardAutoRefresh(assignmentTarget !== null || rfidTarget !== null);
   const needsMapping = trays.filter(
     (tray) => tray.occupied === true && !tray.spool,
   );
@@ -244,7 +264,7 @@ export function SpoolMappingDashboard({
           <WifiOff className="mt-0.5 size-4 shrink-0" />
           <div>
             <strong className="font-semibold">Printer disconnected.</strong>{" "}
-            Tray occupancy and RFID information may be out of date.
+            Slot occupancy and RFID information may be out of date.
           </div>
         </div>
       )}
@@ -254,13 +274,13 @@ export function SpoolMappingDashboard({
           <AlertTriangle className="size-4 shrink-0" />
           <div className="min-w-[16rem] flex-1 leading-6">
             <strong>
-              AMS {needsMapping[0].amsNumber} · Tray{" "}
+              AMS {needsMapping[0].amsNumber} · Slot{" "}
               {needsMapping[0].trayNumber}
               {needsMapping.length === 1
                 ? " needs a mapping."
-                : ` and ${needsMapping.length - 1} other ${needsMapping.length === 2 ? "tray need" : "trays need"} mappings.`}
+                : ` and ${needsMapping.length - 1} other ${needsMapping.length === 2 ? "slot needs" : "slots need"} mappings.`}
             </strong>{" "}
-            Usage from an unmapped tray cannot be tracked yet.
+            Usage from an unmapped slot cannot be tracked yet.
           </div>
           <Button
             type="button"
@@ -268,7 +288,7 @@ export function SpoolMappingDashboard({
             className="border-amber-600/45 bg-transparent hover:bg-amber-500/10 dark:border-amber-300/35"
             onClick={() => setAssignmentTarget(needsMapping[0])}
           >
-            Assign tray {needsMapping[0].trayNumber}
+            Assign slot {needsMapping[0].trayNumber}
           </Button>
         </div>
       )}
@@ -350,6 +370,7 @@ export function SpoolMappingDashboard({
               <TrayCard
                 key={tray.id}
                 tray={tray}
+                rfidEnabled={rfidEnabled}
                 onAssign={setAssignmentTarget}
                 onRfidDetails={setRfidTarget}
               />

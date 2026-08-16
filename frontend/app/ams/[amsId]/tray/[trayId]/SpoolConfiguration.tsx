@@ -19,7 +19,7 @@ export async function SpoolConfiguration(props: Props) {
       <Alert>
         <AlertCircle />
         <AlertDescription>
-          The spool in this tray is automatically selected and cannot be
+          The spool in this slot is automatically selected and cannot be
           changed.
         </AlertDescription>
       </Alert>

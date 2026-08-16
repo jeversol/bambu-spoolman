@@ -1,3 +1,4 @@
+import copy
 import json
 import struct
 import unittest
@@ -146,6 +147,67 @@ class MqttHandlerRecoveryTests(unittest.TestCase):
 
 
 class StatefulPrinterInfoTests(unittest.TestCase):
+    @patch("bambu_spoolman.bambu_mqtt.logger.info")
+    def test_logs_initial_and_changed_rfid_tray_observations(self, info):
+        printer = StatefulPrinterInfo()
+        initial = {
+            "print": {
+                "command": "push_status",
+                "ams": {
+                    "ams": [
+                        {
+                            "id": "0",
+                            "tray": [
+                                {
+                                    "id": "2",
+                                    "tray_uuid": "tag-74",
+                                    "tag_uid": "uid-74",
+                                    "tray_info_idx": "GFA00",
+                                    "tray_type": "PLA",
+                                    "tray_sub_brands": "PLA Basic",
+                                    "tray_color": "000000FF",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            }
+        }
+
+        printer.handle_message(None, copy.deepcopy(initial))
+        printer.handle_message(None, copy.deepcopy(initial))
+        removed = copy.deepcopy(initial)
+        removed["print"]["ams"]["ams"][0]["tray"][0].update(
+            {
+                "tray_uuid": "00000000000000000000000000000000",
+                "tag_uid": "0000000000000000",
+                "tray_info_idx": "",
+                "tray_type": "",
+                "tray_sub_brands": "",
+                "tray_color": "",
+            }
+        )
+        printer.handle_message(None, removed)
+        printer.handle_message(None, copy.deepcopy(initial))
+
+        observation_calls = [
+            call
+            for call in info.call_args_list
+            if call.args and call.args[0].startswith("event=ams_tray_observed")
+        ]
+        self.assertEqual(len(observation_calls), 3)
+        self.assertEqual(observation_calls[0].args[1:5], ("initial", 2, 1, 3))
+        self.assertEqual(
+            observation_calls[0].args[6:10],
+            ("present", "tag-74", "uid-74", "GFA00"),
+        )
+        self.assertEqual(observation_calls[1].args[1:5], ("changed", 2, 1, 3))
+        self.assertEqual(observation_calls[1].args[6], "unknown")
+        self.assertEqual(observation_calls[2].args[1:5], ("changed", 2, 1, 3))
+        self.assertEqual(
+            observation_calls[2].args[6:10], observation_calls[0].args[6:10]
+        )
+
     def test_presence_masks_remove_stale_units_and_trays(self):
         printer = StatefulPrinterInfo()
         printer.update_tray_count = Mock()

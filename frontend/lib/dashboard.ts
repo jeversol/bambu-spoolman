@@ -29,6 +29,16 @@ export function normalizeColorHex(value: string | undefined): string | null {
   return /^[0-9a-f]{6}$/i.test(normalized) ? `#${normalized}` : null;
 }
 
+export function describeColorHex(value: string | null): string | null {
+  if (!value) return null;
+
+  const normalized = value.toUpperCase();
+  if (normalized === "#000000") return "Black";
+  if (normalized === "#FFFFFF") return "White";
+
+  return normalized;
+}
+
 export function getRemainingPercent(spool: Spool): number | null {
   const totalLength = spool.remainingLength + spool.usedLength;
   if (Number.isFinite(totalLength) && totalLength > 0) {

@@ -53,6 +53,7 @@ def _merge_keyed_object_list(existing, delta):
 class StatefulPrinterInfo:
     def __init__(self):
         self._info = {}
+        self._ams_tray_observations = {}
         self.mqtt_handler = None
         self.last_update = 0
         self.connected = False
@@ -74,6 +75,9 @@ class StatefulPrinterInfo:
             if isinstance(raw_ams, dict):
                 _prune_ams_by_presence(
                     self._info.get("print", {}).get("ams", {}), raw_ams
+                )
+                self._log_ams_tray_observations(
+                    self._info.get("print", {}).get("ams", {})
                 )
             self.last_update = int(time.time())
             tray_count = (
@@ -112,8 +116,101 @@ class StatefulPrinterInfo:
         with self._lock:
             return copy.deepcopy(self._info)
 
+    def _log_ams_tray_observations(self, ams):
+        current = {}
+        for unit in ams.get("ams", []):
+            try:
+                ams_id = int(unit.get("id"))
+            except (TypeError, ValueError):
+                continue
+
+            for tray in unit.get("tray", []):
+                try:
+                    slot_id = int(tray.get("id"))
+                except (TypeError, ValueError):
+                    continue
+
+                tray_id = ams_id * 4 + slot_id
+                observation = _tray_observation(tray)
+                current[tray_id] = observation
+                if self._ams_tray_observations.get(tray_id) != observation:
+                    reason = (
+                        "initial"
+                        if tray_id not in self._ams_tray_observations
+                        else "changed"
+                    )
+                    _log_tray_observation(tray_id, ams_id, slot_id, reason, observation)
+
+        for tray_id in self._ams_tray_observations.keys() - current.keys():
+            _log_tray_observation(
+                tray_id,
+                tray_id // 4,
+                tray_id % 4,
+                "removed",
+                _tray_observation({}),
+            )
+
+        self._ams_tray_observations = current
+
 
 stateful_printer_info = StatefulPrinterInfo()
+
+
+def _tray_observation(tray):
+    tray_uuid = tray.get("tray_uuid")
+    uuid_state = (
+        "missing"
+        if tray_uuid is None
+        else "unknown"
+        if tray_uuid == "00000000000000000000000000000000"
+        else "present"
+    )
+    occupied = bool(
+        uuid_state == "present"
+        or tray.get("tray_type")
+        or tray.get("tray_sub_brands")
+        or tray.get("tray_info_idx")
+    )
+    return (
+        occupied,
+        uuid_state,
+        tray_uuid,
+        tray.get("tag_uid"),
+        tray.get("tray_info_idx"),
+        tray.get("tray_type"),
+        tray.get("tray_sub_brands"),
+        tray.get("tray_color"),
+    )
+
+
+def _log_tray_observation(tray_id, ams_id, slot_id, reason, observation):
+    (
+        occupied,
+        uuid_state,
+        tray_uuid,
+        tag_uid,
+        info_idx,
+        material,
+        subtype,
+        color,
+    ) = observation
+    logger.info(
+        "event=ams_tray_observed reason={} tray={} ams={} slot={} occupied={} "
+        "uuid_state={} tray_uuid={} tag_uid={} info_idx={} material={} "
+        "subtype={} color={}",
+        reason,
+        tray_id,
+        ams_id + 1,
+        slot_id + 1,
+        str(occupied).lower(),
+        uuid_state,
+        tray_uuid or "none",
+        tag_uid or "none",
+        info_idx or "none",
+        material or "none",
+        json.dumps(subtype) if subtype else "none",
+        color or "none",
+    )
 
 
 def _prune_ams_by_presence(merged_ams, raw_ams):
