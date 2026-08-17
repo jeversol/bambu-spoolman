@@ -10,13 +10,14 @@ from bambu_spoolman.broker.automatic_spool_switch import AutomaticSpoolSwitch
 from bambu_spoolman.broker.filament_usage_tracker import FilamentUsageTracker
 from bambu_spoolman.build_info import get_build_info
 from bambu_spoolman.grpc.server import serve as run_grpc_server
+from bambu_spoolman.settings import get_rfid_field_key
 
 
 async def async_main():
     build = get_build_info()
     printer_ip = os.environ.get("PRINTER_IP")
     printer_serial = os.environ.get("PRINTER_SERIAL")
-    automatic_switching = os.environ.get("SPOOLMAN_SPOOL_FIELD_NAME") is not None
+    automatic_switching = get_rfid_field_key() is not None
     logger.info(
         "event=service_start application=bambu-spoolman version={} "
         "build_number={} revision={} build_date={} "

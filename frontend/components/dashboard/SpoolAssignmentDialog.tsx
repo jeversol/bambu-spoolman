@@ -51,6 +51,9 @@ export function SpoolAssignmentDialog({
   const [qrScanError, setQrScanError] = useState<string | null>(null);
   const [actionState, setActionState] =
     useState<UpdateTrayAssignmentActionData>({ error: null });
+  const [pendingAction, setPendingAction] = useState<
+    "assign" | "clear" | null
+  >(null);
   const [isPending, startTransition] = useTransition();
   const cameraAvailable = useCameraAvailable();
   const router = useRouter();
@@ -126,6 +129,7 @@ export function SpoolAssignmentDialog({
 
   function assignSpool(spoolId: number) {
     setActionState({ error: null });
+    setPendingAction("assign");
     startTransition(async () => {
       const result = await updateTrayAssignment(targetId, spoolId);
       setActionState(result);
@@ -133,6 +137,24 @@ export function SpoolAssignmentDialog({
         dialogRef.current?.close();
         onClose();
         router.refresh();
+      } else {
+        setPendingAction(null);
+      }
+    });
+  }
+
+  function clearAssignment() {
+    setActionState({ error: null });
+    setPendingAction("clear");
+    startTransition(async () => {
+      const result = await updateTrayAssignment(targetId, -1);
+      setActionState(result);
+      if (!result.error) {
+        dialogRef.current?.close();
+        onClose();
+        router.refresh();
+      } else {
+        setPendingAction(null);
       }
     });
   }
@@ -336,6 +358,20 @@ export function SpoolAssignmentDialog({
 
         {!qrScanning && (
           <div className="flex shrink-0 justify-end gap-2 border-t bg-muted/35 px-5 py-4 sm:px-6">
+            {target.spool && (
+              <Button
+                type="button"
+                variant="outline"
+                className="mr-auto h-11 sm:h-9"
+                disabled={isPending}
+                onClick={clearAssignment}
+              >
+                <ButtonLoading
+                  loading={pendingAction === "clear" && isPending}
+                />
+                Clear assignment
+              </Button>
+            )}
             <Button
               type="button"
               variant="outline"
@@ -352,7 +388,9 @@ export function SpoolAssignmentDialog({
                 isPending || !selectedSpool || selectedSpool === currentSpoolId
               }
             >
-              <ButtonLoading loading={isPending} />
+              <ButtonLoading
+                loading={pendingAction === "assign" && isPending}
+              />
               {target.spool ? "Save mapping" : "Assign selected spool"}
             </Button>
           </div>

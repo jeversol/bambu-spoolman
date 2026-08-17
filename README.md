@@ -27,8 +27,8 @@ Set the following environment variables:
 * `PRINTER_SERIAL` -- The serial number of your printer
 * `PRINTER_ACCESS_CODE` -- The access code for your printer
 * `BAMBU_SPOOLMAN_CONFIG` -- A directory to store the configuration file
-* `SPOOLMAN_SPOOL_FIELD_NAME` -- Spoolman spool custom field used to store Bambu RFID UUIDs. This is required for automatic RFID mapping; without it, tags can still be displayed but cannot be linked.
-* `SPOOLMAN_AUTO_CREATE_SPOOLS` -- Create a matching Spoolman spool when an unknown Bambu RFID tag is detected. RFID mapping must also be configured with `SPOOLMAN_SPOOL_FIELD_NAME`.
+* `SPOOLMAN_RFID_FIELD_KEY` -- Exact **Key** of the Spoolman spool-level Text custom field where Bambu RFID UUIDs are saved (for example, `rfid_tag`). This enables linking detected tags to existing spools and automatic slot mapping. The legacy name `SPOOLMAN_SPOOL_FIELD_NAME` is still accepted.
+* `SPOOLMAN_AUTO_CREATE_SPOOLS` -- Create a matching Spoolman spool when an unknown Bambu RFID tag is detected. RFID mapping must also be configured with `SPOOLMAN_RFID_FIELD_KEY`.
 * `SPOOLMAN_AMS_FIELD_NAME` -- Spoolman field to store which AMS a spool is in
 * `SPOOLMAN_TRAY_FIELD_NAME` -- Spoolman field to store which tray a spool is in
 

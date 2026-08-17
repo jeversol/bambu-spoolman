@@ -60,7 +60,7 @@ class SpoolmanClientTests(unittest.TestCase):
             return_value={"id": 32, "extra": {"rfid_tag": '"tag-32"'}}
         )
 
-        with patch.dict(os.environ, {"SPOOLMAN_SPOOL_FIELD_NAME": "rfid_tag"}):
+        with patch.dict(os.environ, {"SPOOLMAN_RFID_FIELD_KEY": "rfid_tag"}):
             result = client.set_tray_uuid(32, "")
 
         self.assertTrue(result)

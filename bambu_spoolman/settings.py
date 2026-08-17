@@ -6,11 +6,23 @@ from contextlib import contextmanager
 
 EXTERNAL_SPOOL_ID = 255
 DEFAULT_HTTP_TIMEOUT = 30.0
+RFID_FIELD_KEY_ENV = "SPOOLMAN_RFID_FIELD_KEY"
+LEGACY_RFID_FIELD_KEY_ENV = "SPOOLMAN_SPOOL_FIELD_NAME"
 _settings_lock = threading.RLock()
 
 
 def get_http_timeout():
     return float(os.environ.get("BAMBU_SPOOLMAN_HTTP_TIMEOUT", DEFAULT_HTTP_TIMEOUT))
+
+
+def get_rfid_field_key():
+    """Return the Spoolman spool-field key used to store printer RFID UUIDs."""
+    field_key = os.environ.get(RFID_FIELD_KEY_ENV)
+    if field_key is None:
+        field_key = os.environ.get(LEGACY_RFID_FIELD_KEY_ENV)
+    if field_key is None:
+        return None
+    return field_key.strip() or None
 
 
 def get_configuration_path(path):
@@ -59,7 +71,7 @@ def _load_settings():
         with open(settings_file_path) as f:
             data = json.load(f)
 
-            if os.environ.get("SPOOLMAN_SPOOL_FIELD_NAME") is None:
+            if get_rfid_field_key() is None:
                 data["locked_trays"] = []
             return data
     return {

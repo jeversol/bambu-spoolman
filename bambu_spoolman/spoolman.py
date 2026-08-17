@@ -6,7 +6,7 @@ import requests
 import urllib3
 from loguru import logger
 
-from bambu_spoolman.settings import get_http_timeout
+from bambu_spoolman.settings import get_http_timeout, get_rfid_field_key
 
 
 class SpoolmanClient:
@@ -158,7 +158,7 @@ class SpoolmanClient:
         """
         Looks up a spoolman spool by the tray uuid
         """
-        extra_field = os.environ.get("SPOOLMAN_SPOOL_FIELD_NAME")
+        extra_field = get_rfid_field_key()
         if extra_field is None:
             return None
         all_spools = self.get_spools()
@@ -175,7 +175,7 @@ class SpoolmanClient:
         """
         Sets a tray's uuid
         """
-        extra_field = os.environ.get("SPOOLMAN_SPOOL_FIELD_NAME")
+        extra_field = get_rfid_field_key()
         if extra_field is None:
             return False
         existing_spool = self.get_spool(spool_id)
@@ -202,7 +202,7 @@ class SpoolmanClient:
             return False
 
     def supports_tray_locking(self):
-        return os.environ.get("SPOOLMAN_SPOOL_FIELD_NAME") is not None
+        return get_rfid_field_key() is not None
 
     def set_active_tray(self, spool_id, ams_num=None, tray_num=None):
         """
@@ -274,7 +274,7 @@ class SpoolmanClient:
         Creates a new spool in Spoolman
         Returns the created spool or None on failure
         """
-        extra_field = os.environ.get("SPOOLMAN_SPOOL_FIELD_NAME")
+        extra_field = get_rfid_field_key()
         extra = {}
         if extra_field:
             extra[extra_field] = f'"{tray_uuid}"'

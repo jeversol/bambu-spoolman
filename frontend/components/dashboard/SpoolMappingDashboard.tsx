@@ -168,7 +168,7 @@ function TrayCard({
             ? `${printerColorName ? `${printerColorName} · ` : ""}${
                 rfidEnabled
                   ? "RFID detected, not linked to Spoolman"
-                  : "RFID detected · automatic mapping not configured"
+                  : "RFID detected · SPOOLMAN_RFID_FIELD_KEY not configured"
               }`
             : tray.printerName
               ? `${printerColorName ? `${printerColorName} · ` : ""}Reported by printer`

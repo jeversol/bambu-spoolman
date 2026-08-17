@@ -4,7 +4,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from bambu_spoolman.settings import edit_settings, load_settings
+from bambu_spoolman.settings import edit_settings, get_rfid_field_key, load_settings
 
 
 class SettingsTests(unittest.TestCase):
@@ -45,6 +45,21 @@ class SettingsTests(unittest.TestCase):
         settings = load_settings()
         self.assertEqual(settings["tray_count"], 4)
         self.assertEqual(settings["trays"], {"0": 42})
+
+    def test_rfid_field_key_uses_spoolman_custom_field_key(self):
+        with patch.dict(
+            os.environ,
+            {
+                "SPOOLMAN_RFID_FIELD_KEY": " rfid_tag ",
+                "SPOOLMAN_SPOOL_FIELD_NAME": "legacy_tag",
+            },
+        ):
+            self.assertEqual(get_rfid_field_key(), "rfid_tag")
+
+    def test_legacy_rfid_field_name_remains_supported(self):
+        with patch.dict(os.environ, {}, clear=True):
+            os.environ["SPOOLMAN_SPOOL_FIELD_NAME"] = "legacy_tag"
+            self.assertEqual(get_rfid_field_key(), "legacy_tag")
 
 
 if __name__ == "__main__":
