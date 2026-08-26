@@ -76,7 +76,8 @@ ARG BAMBU_SPOOLMAN_BUILD_NUMBER=local
 ARG BAMBU_SPOOLMAN_REVISION=unknown
 ARG BAMBU_SPOOLMAN_BUILD_DATE=unknown
 
-RUN apk add --no-cache nodejs tini \
+RUN apk upgrade --no-cache \
+    && apk add --no-cache nodejs tini \
     && rm -rf \
         /usr/local/lib/python3.13/site-packages/pip \
         /usr/local/lib/python3.13/site-packages/pip-*.dist-info \
