@@ -2,9 +2,6 @@
   $schema: 'https://docs.renovatebot.com/renovate-schema.json',
   extends: ['config:recommended', ':enablePreCommit'],
   timezone: 'America/New_York',
-  // Renovate does not run at an exact scheduled time, so allow a four-hour
-  // weekly window. Cron syntax is preferred over the deprecated Later syntax.
-  schedule: ['* 6-9 * * 1'],
   prConcurrentLimit: 5,
   dependencyDashboard: true,
   // Versions embedded in shell scripts or action inputs are not discovered by
