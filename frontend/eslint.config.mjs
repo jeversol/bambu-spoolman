@@ -14,6 +14,11 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
   ]),
   {
+    // eslint-plugin-react's automatic version detection uses an API removed in
+    // ESLint 10. An explicit major skips that incompatible detection path.
+    settings: {
+      react: { version: "19" },
+    },
     rules: {
       "@typescript-eslint/no-unused-vars": [
         "warn",
