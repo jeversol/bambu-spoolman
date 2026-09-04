@@ -121,13 +121,13 @@ class StatefulPrinterInfo:
         for unit in ams.get("ams", []):
             try:
                 ams_id = int(unit.get("id"))
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 continue
 
             for tray in unit.get("tray", []):
                 try:
                     slot_id = int(tray.get("id"))
-                except (TypeError, ValueError):
+                except TypeError, ValueError:
                     continue
 
                 tray_id = ams_id * 4 + slot_id
@@ -232,7 +232,7 @@ def _prune_ams_by_presence(merged_ams, raw_ams):
                     continue
                 try:
                     unit_id = int(unit.get("id"))
-                except (TypeError, ValueError):
+                except TypeError, ValueError:
                     continue
                 trays[:] = [
                     tray
@@ -244,7 +244,7 @@ def _prune_ams_by_presence(merged_ams, raw_ams):
 def _presence_bits(value):
     try:
         return value if isinstance(value, int) else int(str(value), 16)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         logger.warning("Ignoring invalid AMS presence bitmask: {}", value)
         return None
 
@@ -252,14 +252,14 @@ def _presence_bits(value):
 def _bit_is_set(bits, index):
     try:
         return bool(bits & (1 << int(index)))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return True
 
 
 def _tray_bit_is_set(bits, unit_id, tray_id):
     try:
         return _bit_is_set(bits, unit_id * 4 + int(tray_id))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return True
 
 

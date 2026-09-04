@@ -128,7 +128,7 @@ class FilamentUsageTracker:
                 last_layer = self.current_layer
                 try:
                     reported_layer = int(print_obj["layer_num"])
-                except (TypeError, ValueError):
+                except TypeError, ValueError:
                     logger.warning(
                         "Ignoring invalid layer number: {}", print_obj["layer_num"]
                     )
@@ -466,8 +466,7 @@ class FilamentUsageTracker:
         remaining_layers = set(self.active_model or {}) - self.spent_layers
         if remaining_layers:
             logger.warning(
-                "Print ended with unspent layers {}. Automatic retry remains "
-                "scheduled",
+                "Print ended with unspent layers {}. Automatic retry remains scheduled",
                 sorted(remaining_layers),
             )
             return False
@@ -1164,7 +1163,7 @@ class FilamentUsageTracker:
 def _normalize_mapping(mapping):
     try:
         return int(mapping)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return mapping
 
 
@@ -1197,7 +1196,7 @@ def _normalize_object_ids(value):
     for object_id in value:
         try:
             object_ids.add(int(object_id))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             logger.warning("Ignoring invalid skipped object ID: {}", object_id)
     return object_ids
 
@@ -1205,7 +1204,7 @@ def _normalize_object_ids(value):
 def _normalize_line_number(value):
     try:
         line = int(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
     return line if line > 0 else None
 
