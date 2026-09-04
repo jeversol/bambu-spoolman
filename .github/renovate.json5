@@ -1,0 +1,49 @@
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: ['config:recommended'],
+  timezone: 'America/Indiana/Indianapolis',
+  schedule: ['after 9am and before 10am on Monday'],
+  prConcurrentLimit: 5,
+  dependencyDashboard: true,
+  packageRules: [
+    {
+      description: 'Wait before proposing major updates',
+      matchUpdateTypes: ['major'],
+      minimumReleaseAge: '14 days',
+    },
+    {
+      description: 'Wait before proposing minor updates',
+      matchUpdateTypes: ['minor'],
+      minimumReleaseAge: '7 days',
+    },
+    {
+      description: 'Wait before proposing patch updates',
+      matchUpdateTypes: ['patch'],
+      minimumReleaseAge: '3 days',
+    },
+    {
+      description: 'Group minor and patch npm updates',
+      matchManagers: ['npm'],
+      matchUpdateTypes: ['minor', 'patch'],
+      groupName: 'npm minor and patch dependencies',
+    },
+    {
+      description: 'Group minor and patch Python updates',
+      matchManagers: ['pep621', 'pip_requirements', 'pip_setup', 'poetry', 'uv'],
+      matchUpdateTypes: ['minor', 'patch'],
+      groupName: 'python minor and patch dependencies',
+    },
+    {
+      description: 'Group minor and patch Docker updates',
+      matchManagers: ['dockerfile', 'docker-compose'],
+      matchUpdateTypes: ['minor', 'patch'],
+      groupName: 'docker minor and patch dependencies',
+    },
+    {
+      description: 'Group minor, patch, and digest GitHub Actions updates',
+      matchManagers: ['github-actions'],
+      matchUpdateTypes: ['minor', 'patch', 'digest'],
+      groupName: 'github actions minor and patch dependencies',
+    },
+  ],
+}

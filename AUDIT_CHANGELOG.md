@@ -3,7 +3,7 @@
 - Replaced the end-of-life Node 23 builder and floating tool images with supported, version-and-digest-pinned images; removed pnpm, Supervisor, and its second Python installation from the runtime image.
 - Updated the locked Next.js, React, nice-grpc, protobufjs, Sharp, requests, urllib3, idna, and python-dotenv dependency paths to patched same-major releases and added reproducible npm/Python security audits.
 - Pinned GitHub Actions to reviewed commit SHAs, upgraded away from Node 20 and deprecated `set-output` implementations, and added tests plus high/critical image scanning as mandatory pre-publish gates.
-- Added conservative weekly Dependabot updates, daily deployed-image/lockfile rescanning, immutable commit image tags, SBOM generation, and build provenance attestations.
+- Added conservative weekly dependency updates, daily deployed-image/lockfile rescanning, immutable commit image tags, SBOM generation, and build provenance attestations.
 - Replaced Supervisor with Tini and a portable fail-together entrypoint, added container process lifecycle logs, and made the Next.js standalone trace include its complete SWC runtime helper package under Node 24.
 - Added container build identity to the startup log (`version`, CI `build_number`, Git `revision`, and `build_date`) and matching OCI image labels so a deployment can be traced to a specific workflow run and commit.
 - Based lifecycle handling on the observed Bambu MQTT contract: X1 printers send full `push_status` payloads, while P1 printers send deltas that must be merged; `pushing.pushall` requests a complete snapshot.
