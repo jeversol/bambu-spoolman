@@ -21,6 +21,14 @@ Update `.env` with the appropriate settings. See below for a list of configurati
 
 Once the `.env` file is updated, start the app with `docker compose up -d`
 
+## Security
+
+> [!WARNING]
+> Bambu Spoolman does not provide built-in user authentication. Deploy it only
+> on a trusted private network. Do not expose the web UI or gRPC service
+> directly to the Internet. Use an authenticating reverse proxy if access
+> outside the trusted network is required.
+
 ## Configuration
 
 Set the following environment variables:
