@@ -1,5 +1,6 @@
-#!/usr/bin/env bash
-set -e
+#!/bin/sh
+
+set -eu
 
 echo "Generating Python gRPC code from proto files..."
 

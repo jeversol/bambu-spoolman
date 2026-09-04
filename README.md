@@ -50,14 +50,29 @@ Each container logs its release/ref, CI build number, Git revision, and build ti
 
 ## Dependency and image security
 
-Production builds use frozen Python and pnpm lockfiles, version-and-digest-pinned base images, and commit-pinned GitHub Actions. Before an image is published, the workflow runs backend tests and linting, builds and lints the frontend, audits both dependency graphs, smoke-tests the assembled container, and rejects high or critical findings in the final image. Multi-architecture releases verify both amd64 and arm64 before publishing. Published images include an immutable `sha-<commit>` tag, an SBOM, and provenance metadata.
+Production builds use frozen Python and pnpm lockfiles, version-and-digest-pinned base images, and commit-pinned GitHub Actions. Before an image is published, the workflow runs backend tests and linting, builds and lints the frontend, audits both dependency graphs, smoke-tests the assembled container, and rejects high or critical findings in the final image. Published images include an immutable `sha-<commit>` tag, an SBOM, and provenance metadata.
 
-Renovate proposes weekly npm, Python, Docker, and GitHub Actions updates against the `main` branch. Routine patch and minor updates are grouped after a short cooldown; major updates remain separate for explicit review. A daily workflow rescans both the deployed lockfiles and the published `latest` image because newly disclosed vulnerabilities can affect an image that was clean when built.
+Renovate proposes weekly npm, Python, Docker, and GitHub Actions updates against the `main` branch. Routine patch and minor updates are grouped after a short cooldown; major updates remain separate for explicit review. A weekly workflow rescans both the deployed lockfiles and the published `latest` image because newly disclosed vulnerabilities can affect an image that was clean when built.
 
 Run the current dependency audits locally with:
 
 ```sh
 sh scripts/security-audit.sh
+```
+
+## Development
+
+Run the same tests and linters used in CI with Docker:
+
+```sh
+docker build --target verify .
+```
+
+Build and smoke-test the application image with:
+
+```sh
+docker build --tag bambu-spoolman:local .
+sh scripts/container-smoke-test.sh bambu-spoolman:local
 ```
 
 ## Untested things

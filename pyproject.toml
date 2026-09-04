@@ -1,8 +1,11 @@
 [project]
 name = "bambu-spoolman"
 version = "0.1.0"
-description = ""
-authors = [{ name = "mrkirby153", email = "mr.austinwhyte@gmail.com" }]
+description = "Synchronize Bambu Lab printer filament usage with Spoolman"
+authors = [
+    { name = "mrkirby153", email = "mr.austinwhyte@gmail.com" },
+    { name = "Joe Eversole", email = "joe@recompiled.org" },
+]
 requires-python = "~=3.13.0"
 readme = "README.md"
 dependencies = [

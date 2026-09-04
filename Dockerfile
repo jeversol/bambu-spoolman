@@ -10,8 +10,6 @@ COPY --from=uv /uv /uvx /bin/
 
 FROM build_base AS builder
 
-RUN apk add --no-cache gcc musl-dev bash
-
 RUN python -m venv --without-pip /venv
 
 COPY . .
@@ -32,16 +30,12 @@ FROM builder AS backend_verifier
 RUN .venv/bin/python -m unittest discover -s tests \
     && .venv/bin/ruff check . \
     && .venv/bin/ruff format --check . \
-    && uv export --locked --no-dev --no-emit-project \
-        --format requirements-txt --output-file /tmp/audit-requirements.txt \
-    && uvx pip-audit==2.10.1 --requirement /tmp/audit-requirements.txt \
-        --progress-spinner off \
     && touch /tmp/backend-verified
 
 
 FROM node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS frontend_builder
 
-RUN apk add --no-cache protobuf protobuf-dev tree
+RUN apk add --no-cache protobuf protobuf-dev
 
 WORKDIR /app
 
@@ -59,7 +53,6 @@ RUN cd /app/frontend && pnpm proto-generate && pnpm build
 FROM frontend_builder AS frontend_verifier
 
 RUN cd /app/frontend \
-    && pnpm audit --audit-level high \
     && pnpm lint \
     && touch /tmp/frontend-verified
 
@@ -95,14 +88,12 @@ LABEL org.opencontainers.image.title="bambu-spoolman" \
       org.opencontainers.image.version=${BAMBU_SPOOLMAN_VERSION} \
       org.opencontainers.image.revision=${BAMBU_SPOOLMAN_REVISION} \
       org.opencontainers.image.created=${BAMBU_SPOOLMAN_BUILD_DATE} \
-      io.github.mrkirby153.bambu-spoolman.build-number=${BAMBU_SPOOLMAN_BUILD_NUMBER}
+      io.github.jeversol.bambu-spoolman.build-number=${BAMBU_SPOOLMAN_BUILD_NUMBER}
 
 COPY --from=builder /venv /venv
 COPY --from=frontend_builder /app/frontend/public /app/frontend/public
 COPY --from=frontend_builder /app/frontend/.next/standalone /app/frontend
 COPY --from=frontend_builder /app/frontend/.next/static /app/frontend/.next/static
-COPY --from=backend_verifier /tmp/backend-verified /tmp/verification/backend
-COPY --from=frontend_verifier /tmp/frontend-verified /tmp/verification/frontend
 
 COPY --chmod=755 scripts/container-entrypoint.sh /app/container-entrypoint.sh
 
