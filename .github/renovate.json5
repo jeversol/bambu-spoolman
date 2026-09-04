@@ -57,8 +57,23 @@
     {
       description: 'Keep the Python container on the project-supported minor',
       matchManagers: ['dockerfile'],
+      matchFileNames: ['Dockerfile'],
       matchPackageNames: ['python'],
-      allowedVersions: '/^3\\.13-alpine$/',
+      allowedVersions: '/^3\\.14-alpine$/',
+    },
+    {
+      description: 'Keep the Python project requirement on the supported minor',
+      matchManagers: ['pep621'],
+      matchPackageNames: ['python'],
+      allowedVersions: '/^3\\.14\\./',
+    },
+    {
+      description: 'Automerge production Python image rebuilds after CI',
+      matchManagers: ['dockerfile'],
+      matchFileNames: ['Dockerfile'],
+      matchPackageNames: ['python'],
+      matchUpdateTypes: ['digest'],
+      automerge: true,
     },
     {
       description: 'Keep Node containers on the supported LTS major',

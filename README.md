@@ -62,6 +62,34 @@ Production builds use frozen Python and pnpm lockfiles, version-and-digest-pinne
 
 Renovate proposes weekly npm, Python, Docker, security-tool, and GitHub Actions updates against the `main` branch. Routine patch and minor updates are grouped after a short cooldown; major updates remain separate for explicit review. Python and Node container images stay on the minor or LTS major supported by the project, so runtime upgrades are deliberate changes that also update project constraints, lockfiles, and hard-coded runtime paths. Coupled framework packages are updated together, and the pnpm version in `frontend/package.json` is the single source used by both image builds and dependency audits. A weekly workflow rescans both the deployed lockfiles and the published `latest` image because newly disclosed vulnerabilities can affect an image that was clean when built.
 
+### Python version policy
+
+Production supports one Python minor at a time and uses an immutable container
+digest. Renovate refreshes that digest under the supported minor tag, providing
+Python patch releases and Alpine security updates without making builds
+unrepeatable. Those digest-only refreshes may automerge after CI; changing the
+supported Python minor may not.
+
+The `Test next Python` workflow runs weekly against the next Python release on
+Alpine. During the prerelease period its scheduled result is an early warning
+and does not block other delivery. Before promoting a new minor, run that
+workflow manually; a manual failure is a release blocker.
+
+Promote a Python minor in one reviewed pull request:
+
+1. Change the production base image and digest in `Dockerfile`.
+2. Update `requires-python` in `pyproject.toml` and regenerate `uv.lock` with
+   the new interpreter.
+3. Update any version-specific runtime paths in `Dockerfile`.
+4. Move both Python `allowedVersions` rules in Renovate to the new minor.
+5. Run the normal CI pipeline and a strict manual `Test next Python` workflow
+   while it still targets the candidate minor.
+6. After promotion, move `.github/docker/Dockerfile.next-python` and its
+   workflow build argument to the subsequent Python release.
+
+Do not merge a Renovate change that updates only one of those locations. A new
+Python minor is an application migration, not a routine dependency bump.
+
 Run the current dependency audits locally with:
 
 ```sh

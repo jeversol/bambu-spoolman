@@ -1,0 +1,36 @@
+name: Test next Python
+
+on:
+  schedule:
+    # Early warning only. Promotion is always performed by a reviewed PR.
+    - cron: "17 8 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: next-python-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compatibility:
+    # A scheduled prerelease failure is informative. A manual run is strict and
+    # must pass before the production Python minor is promoted.
+    continue-on-error: ${{ github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Test Python 3.15 release candidate
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: .github/docker/Dockerfile.next-python
+          target: next_python_verifier
+          build-args: NEXT_PYTHON_IMAGE=python:3.15-rc-alpine
+          cache-from: type=gha,scope=next-python
+          cache-to: type=gha,mode=max,scope=next-python

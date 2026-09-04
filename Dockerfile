@@ -1,6 +1,6 @@
 FROM ghcr.io/astral-sh/uv:0.12.4@sha256:d0a6eca6c669dc7e9c51218707b8438a3d30402733d739dcc00adb3e213e8f5c AS uv
 
-FROM python:3.13-alpine@sha256:7415fbc3c9e4979cc717d92377ab2bc7b2b4a2af1ac03cc52b5f3f88efedaf3a AS python_base
+FROM python:3.14-alpine@sha256:c6ead215bfd31f1e433d968853b7a769989117115b728874824e6c0a27cb96fc AS python_base
 
 WORKDIR /app
 
@@ -73,11 +73,11 @@ ARG BAMBU_SPOOLMAN_BUILD_DATE=unknown
 RUN apk upgrade --no-cache \
     && apk add --no-cache nodejs tini \
     && rm -rf \
-        /usr/local/lib/python3.13/site-packages/pip \
-        /usr/local/lib/python3.13/site-packages/pip-*.dist-info \
+        /usr/local/lib/python3.14/site-packages/pip \
+        /usr/local/lib/python3.14/site-packages/pip-*.dist-info \
         /usr/local/bin/pip \
         /usr/local/bin/pip3 \
-        /usr/local/bin/pip3.13
+        /usr/local/bin/pip3.14
 
 ENV LOGURU_LEVEL=INFO \
     BAMBU_SPOOLMAN_VERSION=${BAMBU_SPOOLMAN_VERSION} \
