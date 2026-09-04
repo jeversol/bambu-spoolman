@@ -12,6 +12,11 @@ FROM build_base AS builder
 
 RUN python -m venv --without-pip /venv
 
+COPY pyproject.toml uv.lock README.md ./
+
+# Keep third-party dependencies cached when only application source changes.
+RUN uv sync --locked --no-install-project
+
 COPY . .
 
 RUN uv sync --locked
@@ -99,3 +104,13 @@ COPY --from=frontend_builder /app/frontend/.next/static /app/frontend/.next/stat
 COPY --chmod=755 scripts/container-entrypoint.sh /app/container-entrypoint.sh
 
 ENTRYPOINT ["tini", "--", "/app/container-entrypoint.sh"]
+
+# Make the CI image depend on both verifier stages without copying their marker
+# files into the resulting application image. BuildKit can run the backend and
+# frontend verification branches in parallel with independent app-only work.
+FROM app AS verified_app
+
+RUN --mount=from=backend_verifier,source=/tmp/backend-verified,target=/tmp/backend-verified,ro \
+    --mount=from=frontend_verifier,source=/tmp/frontend-verified,target=/tmp/frontend-verified,ro \
+    test -f /tmp/backend-verified \
+    && test -f /tmp/frontend-verified
