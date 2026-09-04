@@ -4,11 +4,17 @@ BambuLab integration for Spoolman.
 
 This program will monitor a Bambulab printer and synchronize usage automatically to [Spoolman](https://github.com/Donkie/Spoolman). It does this by listening for prints to be started, parsing the gcode and estimating the filament usage per layer. As layers are completed, the usage for that layer will be pushed to Spoolman.
 
+This project was originally derived from
+[`mrkirby153/bambu-spoolman`](https://github.com/mrkirby153/bambu-spoolman) and
+retains its Git history and MIT license. It is now independently maintained for
+a personal deployment and is not intended to remain synchronized with the
+original project.
+
 ## Quickstart
 
 ```sh
-curl -o .env https://raw.githubusercontent.com/mrkirby153/bambu-spoolman/main/.env.example
-curl -o docker-compose.yml https://raw.githubusercontent.com/mrkirby153/bambu-spoolman/main/docker-compose.yml
+curl -o .env https://raw.githubusercontent.com/jeversol/bambu-spoolman/main/.env.example
+curl -o docker-compose.yaml https://raw.githubusercontent.com/jeversol/bambu-spoolman/main/docker-compose.yaml
 ```
 
 Update `.env` with the appropriate settings. See below for a list of configuration options.

@@ -1,6 +1,6 @@
 services:
   bambu-spoolman:
-    image: ghcr.io/mrkirby153/bambu-spoolman:latest
+    image: ghcr.io/jeversol/bambu-spoolman:latest
     restart: unless-stopped
     env_file:
       - .env
