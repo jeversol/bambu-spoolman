@@ -516,7 +516,7 @@ class SpoolmanClient:
 
         try:
             weight_int = int(tray_weight) if tray_weight else 1000
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             weight_int = 1000
 
         logger.info(f"Auto-creating spool: {material} {color_hex} ({weight_int}g)")

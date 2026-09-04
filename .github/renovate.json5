@@ -65,6 +65,12 @@
       allowedVersions: '/^3\\.14\\./',
     },
     {
+      description: 'Keep Ruff and its lockfile on the same approved release',
+      matchManagers: ['pep621'],
+      matchPackageNames: ['ruff'],
+      rangeStrategy: 'pin',
+    },
+    {
       description: 'Automerge production Python image rebuilds after CI',
       matchManagers: ['dockerfile'],
       matchFileNames: ['Dockerfile'],
