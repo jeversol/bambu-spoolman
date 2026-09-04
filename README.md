@@ -52,7 +52,7 @@ Each container logs its release/ref, CI build number, Git revision, and build ti
 
 Production builds use frozen Python and pnpm lockfiles, version-and-digest-pinned base images, and commit-pinned GitHub Actions. Before an image is published, the workflow runs backend tests and linting, builds and lints the frontend, audits both dependency graphs, smoke-tests the assembled container, and rejects high or critical findings in the final image. Published images include an immutable `sha-<commit>` tag, an SBOM, and provenance metadata.
 
-Renovate proposes weekly npm, Python, Docker, and GitHub Actions updates against the `main` branch. Routine patch and minor updates are grouped after a short cooldown; major updates remain separate for explicit review. A weekly workflow rescans both the deployed lockfiles and the published `latest` image because newly disclosed vulnerabilities can affect an image that was clean when built.
+Renovate proposes weekly npm, Python, Docker, security-tool, and GitHub Actions updates against the `main` branch. Routine patch and minor updates are grouped after a short cooldown; major updates remain separate for explicit review. Python and Node container images stay on the minor or LTS major supported by the project, so runtime upgrades are deliberate changes that also update project constraints, lockfiles, and hard-coded runtime paths. Coupled framework packages are updated together, and the pnpm version in `frontend/package.json` is the single source used by both image builds and dependency audits. A weekly workflow rescans both the deployed lockfiles and the published `latest` image because newly disclosed vulnerabilities can affect an image that was clean when built.
 
 Run the current dependency audits locally with:
 

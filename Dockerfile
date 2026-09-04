@@ -40,7 +40,8 @@ RUN apk add --no-cache protobuf protobuf-dev
 WORKDIR /app
 
 COPY frontend/package.json frontend/pnpm-lock.yaml /app/frontend/
-RUN npm install --global pnpm@10.34.5 \
+RUN pnpm_version=$(node -p "require('/app/frontend/package.json').packageManager.split('@')[1]") \
+    && npm install --global "pnpm@$pnpm_version" \
     && cd /app/frontend \
     && pnpm install --frozen-lockfile
 

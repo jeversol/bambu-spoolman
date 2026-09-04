@@ -45,12 +45,20 @@ jobs:
           tags: |
             type=raw,value=latest
             type=sha,prefix=sha-,format=long
-      - name: Build image for vulnerability scanning
+      - name: Log in
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build release candidate
+        id: candidate
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
-          load: true
-          tags: bambu-spoolman:scan
+          push: true
+          platforms: linux/amd64
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:candidate-${{ github.sha }}
           build-args: |
             BAMBU_SPOOLMAN_VERSION=${{ github.ref_name }}
             BAMBU_SPOOLMAN_BUILD_NUMBER=${{ github.run_number }}.${{ github.run_attempt }}
@@ -59,37 +67,27 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          sbom: true
+          provenance: mode=max
       - name: Smoke-test production container
-        run: sh scripts/container-smoke-test.sh bambu-spoolman:scan
+        run: sh scripts/container-smoke-test.sh "${REGISTRY}/${IMAGE_NAME}@${{ steps.candidate.outputs.digest }}"
       - name: Scan image for known vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: bambu-spoolman:scan
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.candidate.outputs.digest }}
           scanners: vuln
           vuln-type: os,library
           severity: HIGH,CRITICAL
           ignore-unfixed: false
           exit-code: "1"
-          version: v0.74.0
-      - name: Log in
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and push
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: .
-          push: true
-          build-args: |
-            BAMBU_SPOOLMAN_VERSION=${{ github.ref_name }}
-            BAMBU_SPOOLMAN_BUILD_NUMBER=${{ github.run_number }}.${{ github.run_attempt }}
-            BAMBU_SPOOLMAN_REVISION=${{ github.sha }}
-            BAMBU_SPOOLMAN_BUILD_DATE=${{ steps.build_info.outputs.created }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: linux/amd64
-          tags: ${{ steps.meta.outputs.tags }}
-          cache-from: type=gha
-          sbom: true
-          provenance: mode=max
+          version: v0.74.0 # renovate: datasource=github-releases depName=aquasecurity/trivy
+      - name: Publish verified image
+        env:
+          RELEASE_TAGS: ${{ steps.meta.outputs.tags }}
+          SOURCE_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.candidate.outputs.digest }}
+        run: |
+          printf '%s\n' "$RELEASE_TAGS" | while IFS= read -r tag; do
+            if [ -n "$tag" ]; then
+              docker buildx imagetools create --tag "$tag" "$SOURCE_IMAGE"
+            fi
+          done

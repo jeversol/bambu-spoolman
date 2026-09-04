@@ -7,6 +7,36 @@
   schedule: ['* 6-9 * * 1'],
   prConcurrentLimit: 5,
   dependencyDashboard: true,
+  // Versions embedded in shell scripts or action inputs are not discovered by
+  // Renovate's built-in managers. Keep those pins on the same update path as
+  // their normal package/image declarations.
+  customManagers: [
+    {
+      customType: 'regex',
+      managerFilePatterns: ['/^scripts/security-audit\\.sh$/'],
+      matchStrings: [
+        'uvx pip-audit==(?<currentValue>[^ ]+)',
+      ],
+      depNameTemplate: 'pip-audit',
+      datasourceTemplate: 'pypi',
+    },
+    {
+      customType: 'regex',
+      managerFilePatterns: ['/^scripts/security-audit\\.sh$/'],
+      matchStrings: [
+        'node:(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)',
+      ],
+      depNameTemplate: 'node',
+      datasourceTemplate: 'docker',
+    },
+    {
+      customType: 'regex',
+      managerFilePatterns: ['/^\\.github/workflows/[^/]+\\.ya?ml$/'],
+      matchStrings: [
+        'version: (?<currentValue>v?\\d+\\.\\d+\\.\\d+) # renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)',
+      ],
+    },
+  ],
   // GitHub branch protection requires both CI jobs before platform automerge.
   automergeType: 'pr',
   platformAutomerge: true,
@@ -23,6 +53,18 @@
       matchCurrentVersion: '!/^0/',
       matchUpdateTypes: ['minor', 'patch'],
       automerge: true,
+    },
+    {
+      description: 'Keep the Python container on the project-supported minor',
+      matchManagers: ['dockerfile'],
+      matchPackageNames: ['python'],
+      allowedVersions: '/^3\\.13-alpine$/',
+    },
+    {
+      description: 'Keep Node containers on the supported LTS major',
+      matchDatasources: ['docker'],
+      matchPackageNames: ['node'],
+      allowedVersions: '/^24-alpine$/',
     },
     {
       description: 'Wait before proposing major updates',
@@ -56,6 +98,18 @@
       matchManagers: ['dockerfile', 'docker-compose'],
       matchUpdateTypes: ['minor', 'patch'],
       groupName: 'docker minor and patch dependencies',
+    },
+    {
+      description: 'Keep Next.js and its ESLint configuration aligned',
+      matchManagers: ['npm'],
+      matchPackageNames: ['next', 'eslint-config-next'],
+      groupName: 'next.js packages',
+    },
+    {
+      description: 'Keep React runtime and type packages aligned',
+      matchManagers: ['npm'],
+      matchPackageNames: ['react', 'react-dom', '@types/react', '@types/react-dom'],
+      groupName: 'react packages',
     },
     {
       description: 'Group minor, patch, and digest GitHub Actions updates',
