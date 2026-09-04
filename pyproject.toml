@@ -24,7 +24,7 @@ mqtt-replay = "bambu_spoolman.debug.replay:main"
 [dependency-groups]
 dev = [
     "grpcio-tools>=1.76.0",
-    "ruff>=0.8.6,<0.9",
+    "ruff>=0.16.5,<0.17",
     "setuptools>=83.0.0",
 ]
 
