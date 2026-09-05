@@ -4,8 +4,20 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:uid=10001,gid=10001,mode=1777
+      - /app/frontend/.next/cache:uid=10001,gid=10001,mode=0700
     volumes:
-      - config:${BAMBU_SPOOLMAN_CONFIG}
+      - config:${BAMBU_SPOOLMAN_CONFIG:-/config}
     ports:
       - ${BAMBU_SPOOLMAN_PORT}:3000
 volumes:

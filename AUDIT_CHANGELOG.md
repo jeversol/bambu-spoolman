@@ -1,5 +1,6 @@
 # Reliability audit changelog
 
+- Hardened the runtime to migrate config-volume ownership automatically and execute application processes as UID/GID 10001, removed the non-reproducible blanket Alpine upgrade, and made the supplied Compose deployment read-only with only the startup `CHOWN`, `SETGID`, and `SETUID` capabilities, privilege escalation disabled, and narrowly scoped writable storage.
 - Replaced the end-of-life Node 23 builder and floating tool images with supported, version-and-digest-pinned images; removed pnpm, Supervisor, and its second Python installation from the runtime image.
 - Updated the locked Next.js, React, nice-grpc, protobufjs, Sharp, requests, urllib3, idna, and python-dotenv dependency paths to patched same-major releases and added reproducible npm/Python security audits.
 - Pinned GitHub Actions to reviewed commit SHAs, upgraded away from Node 20 and deprecated `set-output` implementations, and added tests plus high/critical image scanning as mandatory pre-publish gates.

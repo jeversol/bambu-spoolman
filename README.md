@@ -40,7 +40,7 @@ Set the following environment variables:
 * `PRINTER_IP` -- The IP address of your printer
 * `PRINTER_SERIAL` -- The serial number of your printer
 * `PRINTER_ACCESS_CODE` -- The access code for your printer
-* `BAMBU_SPOOLMAN_CONFIG` -- A directory to store the configuration file
+* `BAMBU_SPOOLMAN_CONFIG` -- A directory to store the configuration file (default: `/config`)
 * `SPOOLMAN_RFID_FIELD_KEY` -- Exact **Key** of the Spoolman spool-level Text custom field where Bambu RFID UUIDs are saved (for example, `rfid_tag`). This enables linking detected tags to existing spools and automatic slot mapping. The legacy name `SPOOLMAN_SPOOL_FIELD_NAME` is still accepted.
 * `SPOOLMAN_AUTO_CREATE_SPOOLS` -- Create a matching Spoolman spool when an unknown Bambu RFID tag is detected. RFID mapping must also be configured with `SPOOLMAN_RFID_FIELD_KEY`.
 * `SPOOLMAN_AMS_FIELD_NAME` -- Spoolman field to store which AMS a spool is in
@@ -59,6 +59,45 @@ Each container logs its release/ref, CI build number, Git revision, and build ti
 ## Dependency and image security
 
 Production builds use frozen Python and pnpm lockfiles, version-and-digest-pinned base images, and commit-pinned GitHub Actions. Before an image is published, the workflow runs backend tests and linting, builds and lints the frontend, audits both dependency graphs, smoke-tests the assembled container, and rejects high or critical findings in the final image. Published images include an immutable `sha-<commit>` tag, an SBOM, and provenance metadata.
+
+### Container permissions and upgrades
+
+At startup, the image automatically changes ownership of existing settings and
+print checkpoints to the dedicated numeric user and group `10001:10001`. It
+then permanently drops root and all effective capabilities before starting
+either application process. No manual data migration is required for ordinary
+Docker volumes or Kubernetes persistent volumes.
+
+Existing deployments that use the runtime defaults continue to work without a
+Compose or manifest update because the default Docker and Kubernetes capability
+sets include the three capabilities needed during initialization. Updating to
+the supplied Compose file is recommended because it also enables a read-only
+root filesystem, prevents privilege escalation, and drops every capability
+except `CHOWN`, `SETGID`, and `SETUID`.
+
+Existing deployments must be changed before upgrading if they do any of the
+following:
+
+- Drop all capabilities without adding `CHOWN`, `SETGID`, and `SETUID` back.
+- Set Kubernetes `runAsNonRoot: true` or force `runAsUser`, which prevents the
+  automatic ownership migration and identity transition.
+- Mount `/config` read-only.
+
+For Kubernetes, the container security context can use:
+
+```yaml
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+    add: ["CHOWN", "SETGID", "SETUID"]
+```
+
+Do not set `runAsUser` or `runAsNonRoot` on this container. Mount writable
+volumes at `/config`, `/tmp`, and `/app/frontend/.next/cache`. Storage backends
+that deny ownership changes, such as some root-squashed NFS exports, must
+instead provision `/config` with ownership `10001:10001`.
 
 Renovate proposes weekly npm, Python, Docker, security-tool, and GitHub Actions updates against the `main` branch. Routine patch and minor updates are grouped after a short cooldown; major updates remain separate for explicit review. Python and Node container images stay on the minor or LTS major supported by the project, so runtime upgrades are deliberate changes that also update project constraints, lockfiles, and hard-coded runtime paths. Coupled framework packages are updated together, and the pnpm version in `frontend/package.json` is the single source used by both image builds and dependency audits. A weekly workflow rescans both the deployed lockfiles and the published `latest` image because newly disclosed vulnerabilities can affect an image that was clean when built.
 
