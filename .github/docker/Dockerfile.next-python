@@ -2,7 +2,7 @@
 # Production continues to use the version-and-digest-pinned base in /Dockerfile.
 ARG NEXT_PYTHON_IMAGE=python:3.15-rc-alpine
 
-FROM ghcr.io/astral-sh/uv:0.12.4@sha256:d0a6eca6c669dc7e9c51218707b8438a3d30402733d739dcc00adb3e213e8f5c AS uv
+FROM ghcr.io/astral-sh/uv:0.12.10@sha256:2bb3ebca0a796a155094a27773d290c4b074572e6107f171d88d086682fd2500 AS uv
 
 FROM ${NEXT_PYTHON_IMAGE} AS next_python_verifier
 
