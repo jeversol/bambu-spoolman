@@ -73,7 +73,7 @@ RUN apk add --no-cache protobuf protobuf-dev
 
 WORKDIR /app
 
-COPY frontend/package.json frontend/pnpm-lock.yaml /app/frontend/
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml /app/frontend/
 RUN pnpm_version=$(node -p "require('/app/frontend/package.json').packageManager.split('@')[1]") \
     && npm install --global "pnpm@$pnpm_version" \
     && cd /app/frontend \
