@@ -10,7 +10,10 @@ COPY --from=uv /uv /uvx /bin/
 
 FROM python_base AS runtime_base
 
-RUN apk add --no-cache nodejs su-exec \
+RUN apk add --no-cache \
+        'libuuid>=2.42.3-r0' \
+        nodejs \
+        su-exec \
     && addgroup -S -g 10001 bambu-spoolman \
     && adduser -S -D -H -u 10001 -G bambu-spoolman bambu-spoolman \
     && mkdir -p /config \
