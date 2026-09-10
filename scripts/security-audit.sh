@@ -20,7 +20,7 @@ docker run --rm --entrypoint /bin/sh "$backend_image" -c '
 docker run --rm \
     --volume "$repository_root/frontend:/workspace:ro" \
     --workdir /workspace \
-    node:24-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf \
+    node:24-alpine@sha256:50c8e8ca1d27439048670df5883f32d57cf81cff6233222c893fd0d9884cbd81 \
     /bin/sh -c '
         pnpm_version=$(node -p "require(\"./package.json\").packageManager.split(\"@\")[1]")
         npm install --global "pnpm@$pnpm_version" >/dev/null
