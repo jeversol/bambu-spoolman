@@ -7,6 +7,7 @@ from bambu_spoolman.settings import edit_settings, load_settings
 from bambu_spoolman.spoolman import new_client
 
 UNKNOWN_TRAY = "00000000000000000000000000000000"
+UNKNOWN_TAG_UID = "0000000000000000"
 
 
 class AutomaticSpoolSwitch:
@@ -21,6 +22,7 @@ class AutomaticSpoolSwitch:
     def __init__(self):
         self.spoolman_client = new_client()
         self.tray_mapping = None
+        self.tag_mapping = None
         self.auto_create_enabled = (
             os.environ.get("SPOOLMAN_AUTO_CREATE_SPOOLS", "false").lower() == "true"
         )
@@ -45,18 +47,22 @@ class AutomaticSpoolSwitch:
 
         print_obj = stateful_printer_info.get_info().get("print", {})
         self.tray_mapping = None
+        self.tag_mapping = None
         self._sync_trays(print_obj)
 
     def _sync_trays(self, print_obj):
         if self.tray_mapping is None:
             # Do an initial sync
             self.tray_mapping = {}
+            self.tag_mapping = {}
             self._initial_sync(print_obj)
         else:
             # Check if the trays have changed
             self._sync(print_obj)
 
     def _initial_sync(self, print_obj):
+        if self.tag_mapping is None:
+            self.tag_mapping = {}
         ams = print_obj["ams"]
         ams_data = ams.get("ams", [])
         logger.info(
@@ -69,7 +75,8 @@ class AutomaticSpoolSwitch:
             for tray in data.get("tray", []):
                 tray_id = int(data["id"]) * 4 + int(tray["id"])
                 tray_uuid = tray.get("tray_uuid", None)
-                if tray_uuid is None or tray_uuid == UNKNOWN_TRAY:
+                tag_uid = self._physical_tag_uid(tray)
+                if (tray_uuid is None or tray_uuid == UNKNOWN_TRAY) and not tag_uid:
                     self._unlock_tray(tray_id, clear=False)
                 elif self._is_overridden(tray_id, tray_uuid):
                     logger.debug(
@@ -78,7 +85,7 @@ class AutomaticSpoolSwitch:
                     )
                     self._unlock_tray(tray_id, clear=False)
                 else:
-                    spool = self.spoolman_client.lookup_by_tray_uuid(tray_uuid)
+                    spool = self._resolve_spool(tray_id, tray_uuid, tag_uid)
                     if spool is not None:
                         spool_id = spool["id"]
                         logger.debug("Found spool {}: {}", spool_id, spool)
@@ -87,9 +94,13 @@ class AutomaticSpoolSwitch:
                         logger.debug("Spool {} not found", tray_uuid)
                         self._handle_missing_spool(tray_id, tray_uuid, tray)
                 self.tray_mapping[tray_id] = tray_uuid
+                self.tag_mapping[tray_id] = tag_uid
 
     def _sync(self, print_obj):
         prev_tray_mapping = self.tray_mapping.copy()
+        prev_tag_mapping = (self.tag_mapping or {}).copy()
+        if self.tag_mapping is None:
+            self.tag_mapping = {}
         ams = print_obj["ams"]
         ams_data = ams.get("ams", [])
         current_tray_ids = set()
@@ -99,10 +110,12 @@ class AutomaticSpoolSwitch:
                 tray_id = int(data["id"]) * 4 + int(tray["id"])
                 current_tray_ids.add(tray_id)
                 tray_uuid = tray.get("tray_uuid", None)
+                tag_uid = self._physical_tag_uid(tray)
 
                 prev = prev_tray_mapping.get(tray_id, None)
+                prev_tag_uid = prev_tag_mapping.get(tray_id, None)
                 logger.debug("Tray {}: {} -> {}", tray_id, prev, tray_uuid)
-                if prev != tray_uuid:
+                if prev != tray_uuid or prev_tag_uid != tag_uid:
                     logger.info(
                         "event=ams_tray_changed tray={} previous_uuid={} "
                         "current_uuid={}",
@@ -112,15 +125,17 @@ class AutomaticSpoolSwitch:
                     )
                     self._clear_override(tray_id)
                     if (
-                        tray_uuid == UNKNOWN_TRAY or tray_uuid is None
-                    ) and prev is not None:
+                        (tray_uuid == UNKNOWN_TRAY or tray_uuid is None)
+                        and not tag_uid
+                        and (prev is not None or prev_tag_uid is not None)
+                    ):
                         # Tray was removed. Unlock the spool and clear the mapping
                         logger.debug("Unlocking tray {}: {}", tray_id, prev)
                         self._unlock_tray(tray_id, clear=True)
                     else:
                         # Spool was changed. Update the mapping and lock if it exists
                         logger.debug("Tray changed. Looking up spool {}", tray_uuid)
-                        spool = self.spoolman_client.lookup_by_tray_uuid(tray_uuid)
+                        spool = self._resolve_spool(tray_id, tray_uuid, tag_uid)
                         if spool is not None:
                             spool_id = spool["id"]
                             logger.debug("Found spool {}: {}", spool_id, spool)
@@ -130,12 +145,47 @@ class AutomaticSpoolSwitch:
                             self._handle_missing_spool(tray_id, tray_uuid, tray)
 
                 self.tray_mapping[tray_id] = tray_uuid
+                self.tag_mapping[tray_id] = tag_uid
 
         for removed_tray_id in prev_tray_mapping.keys() - current_tray_ids:
             logger.info("event=ams_tray_removed tray={}", removed_tray_id)
             self._clear_override(removed_tray_id)
             self._unlock_tray(removed_tray_id, clear=True)
             self.tray_mapping.pop(removed_tray_id, None)
+            self.tag_mapping.pop(removed_tray_id, None)
+
+    def _resolve_spool(self, tray_id, tray_uuid, tag_uid):
+        """Resolve a Bambu spool and teach Spoolman every identity we observed."""
+        reader_id = f"bambu-ams-{(tray_id // 4) + 1}-slot-{(tray_id % 4) + 1}"
+        reader_name = f"Bambu AMS {(tray_id // 4) + 1} slot {(tray_id % 4) + 1}"
+
+        spool = None
+        if tag_uid:
+            spool = self.spoolman_client.scan_tag(
+                tag_uid, reader_id=reader_id, name=reader_name
+            )
+        matched_by_scan = spool is not None
+        if spool is None and tray_uuid and tray_uuid != UNKNOWN_TRAY:
+            spool = self.spoolman_client.lookup_by_tray_uuid(tray_uuid)
+
+        if spool is not None:
+            linked = self.spoolman_client.link_bambu_tags(
+                spool["id"], tray_uuid=tray_uuid, tag_uid=tag_uid
+            )
+            # An initially unknown physical tag becomes useful to paired Spoolman
+            # browsers immediately after the stable tray UUID resolves it.
+            if tag_uid and linked and not matched_by_scan:
+                self.spoolman_client.scan_tag(
+                    tag_uid, reader_id=reader_id, name=reader_name
+                )
+        return spool
+
+    @staticmethod
+    def _physical_tag_uid(tray):
+        tag_uid = tray.get("tag_uid")
+        if not tag_uid or tag_uid == UNKNOWN_TAG_UID or set(str(tag_uid)) == {"0"}:
+            return None
+        return tag_uid
 
     def override_tray(self, tray_id, tray_uuid):
         """Pause RFID control while the specified tag remains in the tray."""
@@ -187,7 +237,12 @@ class AutomaticSpoolSwitch:
         Attempts to auto-create if enabled, otherwise unlocks the tray.
         """
         # Try to auto-create if enabled and tray_uuid is valid (not empty/unknown)
-        if self.auto_create_enabled and tray_uuid and tray_uuid != UNKNOWN_TRAY:
+        if (
+            self.auto_create_enabled
+            and self.spoolman_client.supports_tray_locking()
+            and tray_uuid
+            and tray_uuid != UNKNOWN_TRAY
+        ):
             logger.info(
                 "event=spool_auto_create_started tray={} uuid={}",
                 tray_id,

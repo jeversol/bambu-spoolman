@@ -10,14 +10,15 @@ from bambu_spoolman.broker.automatic_spool_switch import AutomaticSpoolSwitch
 from bambu_spoolman.broker.filament_usage_tracker import FilamentUsageTracker
 from bambu_spoolman.build_info import get_build_info
 from bambu_spoolman.grpc.server import serve as run_grpc_server
-from bambu_spoolman.settings import get_rfid_field_key
 
 
 async def async_main():
     build = get_build_info()
     printer_ip = os.environ.get("PRINTER_IP")
     printer_serial = os.environ.get("PRINTER_SERIAL")
-    automatic_switching = get_rfid_field_key() is not None
+    # Always listen for AMS changes. On Spoolman v0.27+ this also reports physical
+    # tag scans and learns both Bambu tags without requiring a custom field.
+    automatic_switching = True
     logger.info(
         "event=service_start application=bambu-spoolman version={} "
         "build_number={} revision={} build_date={} "
@@ -53,9 +54,8 @@ async def async_main():
     usage_tracker = FilamentUsageTracker()
     mqtt.add_callback(usage_tracker.on_message)
 
-    if automatic_switching:
-        logger.info("event=automatic_spool_switching_enabled")
-        mqtt.add_callback(AutomaticSpoolSwitch.get_instance().on_message)
+    logger.info("event=automatic_spool_switching_enabled")
+    mqtt.add_callback(AutomaticSpoolSwitch.get_instance().on_message)
 
     mqtt.start()
 

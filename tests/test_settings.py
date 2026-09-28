@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import threading
@@ -60,6 +61,25 @@ class SettingsTests(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True):
             os.environ["SPOOLMAN_SPOOL_FIELD_NAME"] = "legacy_tag"
             self.assertEqual(get_rfid_field_key(), "legacy_tag")
+
+    def test_native_tag_locks_survive_without_a_custom_field(self):
+        settings_path = os.path.join(self.temp_directory.name, "settings.json")
+        with open(settings_path, "w") as settings_file:
+            json.dump(
+                {
+                    "trays": {"0": 42},
+                    "tray_count": 4,
+                    "locked_trays": [0],
+                    "rfid_overrides": {},
+                },
+                settings_file,
+            )
+
+        with patch.dict(os.environ, {}, clear=True):
+            os.environ["BAMBU_SPOOLMAN_CONFIG"] = self.temp_directory.name
+            settings = load_settings()
+
+        self.assertEqual(settings["locked_trays"], [0])
 
 
 if __name__ == "__main__":

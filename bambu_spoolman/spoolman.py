@@ -1,4 +1,5 @@
 import os
+import re
 import time
 from urllib.parse import urlencode
 
@@ -7,6 +8,11 @@ import urllib3
 from loguru import logger
 
 from bambu_spoolman.settings import get_http_timeout, get_rfid_field_key
+
+NATIVE_TAGS_MIN_VERSION = (0, 27, 0)
+BAMBU_PHYSICAL_TAG_FORMAT = "bambu"
+BAMBU_TRAY_TAG_FORMAT = "bambu-tray"
+BAMBU_TAG_FORMATS = frozenset({BAMBU_PHYSICAL_TAG_FORMAT, BAMBU_TRAY_TAG_FORMAT})
 
 
 class SpoolmanClient:
@@ -22,6 +28,7 @@ class SpoolmanClient:
         self.timeout = get_http_timeout()
         self._external_filaments_cache = None
         self._external_filaments_cache_time = None
+        self._supports_native_tags = None
         self.ams_field_name = os.environ.get("SPOOLMAN_AMS_FIELD_NAME")
         self.tray_field_name = os.environ.get("SPOOLMAN_TRAY_FIELD_NAME")
 
@@ -131,6 +138,147 @@ class SpoolmanClient:
         except requests.exceptions.HTTPError:
             return None
 
+    def supports_native_tags(self):
+        """Return whether the connected Spoolman has the v0.27 tag API."""
+        if self._supports_native_tags is not None:
+            return self._supports_native_tags
+
+        try:
+            version = str(self.get_info().get("version", ""))
+        except (requests.RequestException, AttributeError, TypeError, ValueError) as e:
+            # Do not cache connection failures. Spoolman may still be starting, and a
+            # later MQTT update or UI request should be able to discover the feature.
+            logger.warning("Could not detect Spoolman native tag support: {}", e)
+            return False
+
+        match = re.match(r"^v?(\d+)\.(\d+)\.(\d+)", version)
+        self._supports_native_tags = bool(
+            match
+            and tuple(int(part) for part in match.groups()) >= NATIVE_TAGS_MIN_VERSION
+        )
+        return self._supports_native_tags
+
+    def scan_tag(self, tag_uid, *, reader_id=None, name=None):
+        """Report a physical tag read and return the matched spool, if any."""
+        if not tag_uid or not self.supports_native_tags():
+            return None
+
+        payload = {"uid": tag_uid, "format": BAMBU_PHYSICAL_TAG_FORMAT}
+        if reader_id:
+            payload["reader_id"] = reader_id
+        if name:
+            payload["name"] = name
+
+        try:
+            response = requests.post(
+                self._make_api_route("tag/scan"),
+                json=payload,
+                verify=self.verify,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            return response.json().get("spool")
+        except requests.RequestException as e:
+            logger.warning("Failed to report Bambu RFID scan {}: {}", tag_uid, e)
+            return None
+
+    def find_spool_by_tag(self, tag_uid, *, allow_archived=False):
+        """Find one spool by a native Spoolman tag UID."""
+        if not tag_uid or not self.supports_native_tags():
+            return None
+
+        try:
+            response = requests.get(
+                self._make_api_route(
+                    "spool",
+                    tag=tag_uid,
+                    allow_archived=str(allow_archived).lower(),
+                ),
+                verify=self.verify,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            spools = response.json()
+            return spools[0] if spools else None
+        except requests.RequestException as e:
+            logger.warning("Failed to look up Spoolman tag {}: {}", tag_uid, e)
+            return None
+
+    def link_tag(self, spool_id, tag_uid, tag_format):
+        """Idempotently link a native Spoolman tag to a spool."""
+        if not tag_uid or not self.supports_native_tags():
+            return False
+
+        try:
+            response = requests.post(
+                self._make_api_route(f"spool/{spool_id}/tag"),
+                json={"uid": tag_uid, "format": tag_format},
+                verify=self.verify,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            return True
+        except requests.RequestException as e:
+            status = getattr(e.response, "status_code", None)
+            if status == 409:
+                logger.warning(
+                    "Bambu RFID tag {} is already linked to another Spoolman item",
+                    tag_uid,
+                )
+            else:
+                logger.warning(
+                    "Failed to link Bambu RFID tag {} to spool {}: {}",
+                    tag_uid,
+                    spool_id,
+                    e,
+                )
+            return False
+
+    def link_bambu_tags(self, spool_id, *, tray_uuid=None, tag_uid=None):
+        """Link Bambu's stable spool identity and currently visible physical tag."""
+        if not self.supports_native_tags():
+            return False
+
+        results = []
+        if tray_uuid:
+            results.append(self.link_tag(spool_id, tray_uuid, BAMBU_TRAY_TAG_FORMAT))
+        if tag_uid and not _is_zero_identifier(tag_uid):
+            results.append(self.link_tag(spool_id, tag_uid, BAMBU_PHYSICAL_TAG_FORMAT))
+        return bool(results) and all(results)
+
+    def unlink_bambu_tags(self, spool_id, spool=None):
+        """Remove only native tags managed by this integration."""
+        if not self.supports_native_tags():
+            return False
+
+        spool = spool or self.get_spool(spool_id)
+        if spool is None:
+            return False
+
+        managed_tags = [
+            tag
+            for tag in spool.get("tags", [])
+            if tag.get("format") in BAMBU_TAG_FORMATS and tag.get("uid")
+        ]
+        success = True
+        for tag in managed_tags:
+            try:
+                response = requests.delete(
+                    self._make_api_route(f"spool/{spool_id}/tag/{tag['uid']}"),
+                    verify=self.verify,
+                    timeout=self.timeout,
+                )
+                response.raise_for_status()
+            except requests.RequestException as e:
+                success = False
+                logger.warning(
+                    "Failed to unlink Bambu RFID tag {} from spool {}: {}",
+                    tag["uid"],
+                    spool_id,
+                    e,
+                )
+        return success
+
     def consume_spool(self, spool_id, *, length=None, weight=None):
         """
         Consume a part of a spool
@@ -158,6 +306,12 @@ class SpoolmanClient:
         """
         Looks up a spoolman spool by the tray uuid
         """
+        if not tray_uuid:
+            return None
+        native_match = self.find_spool_by_tag(tray_uuid)
+        if native_match is not None:
+            return native_match
+
         extra_field = get_rfid_field_key()
         if extra_field is None:
             return None
@@ -175,12 +329,22 @@ class SpoolmanClient:
         """
         Sets a tray's uuid
         """
-        extra_field = get_rfid_field_key()
-        if extra_field is None:
-            return False
         existing_spool = self.get_spool(spool_id)
         if existing_spool is None:
             return False
+
+        native_supported = self.supports_native_tags()
+        native_success = False
+        if tray_uuid:
+            native_success = self.link_bambu_tags(spool_id, tray_uuid=tray_uuid)
+            if native_supported and not native_success:
+                return False
+        elif native_supported:
+            native_success = self.unlink_bambu_tags(spool_id, existing_spool)
+
+        extra_field = get_rfid_field_key()
+        if extra_field is None:
+            return native_success
         # Get extra data
         extra = existing_spool.get("extra", {})
         # An empty UUID permanently removes the RFID association.
@@ -197,12 +361,12 @@ class SpoolmanClient:
                 timeout=self.timeout,
             )
             response.raise_for_status()
-            return True
+            return native_success if native_supported else True
         except requests.exceptions.RequestException:
-            return False
+            return native_success
 
     def supports_tray_locking(self):
-        return get_rfid_field_key() is not None
+        return self.supports_native_tags() or get_rfid_field_key() is not None
 
     def set_active_tray(self, spool_id, ams_num=None, tray_num=None):
         """
@@ -269,7 +433,9 @@ class SpoolmanClient:
             logger.error("Failed to set AMS/tray fields for spool {}: {}", spool_id, e)
             return False
 
-    def create_spool(self, filament_id, tray_uuid, initial_weight=1000):
+    def create_spool(
+        self, filament_id, tray_uuid, initial_weight=1000, *, tag_uid=None
+    ):
         """
         Creates a new spool in Spoolman
         Returns the created spool or None on failure
@@ -299,7 +465,11 @@ class SpoolmanClient:
 
             logger.info(f"Created spool with filament_id {filament_id}")
 
-            return response.json()
+            created_spool = response.json()
+            self.link_bambu_tags(
+                created_spool["id"], tray_uuid=tray_uuid, tag_uid=tag_uid
+            )
+            return created_spool
         except Exception as e:
             logger.error(f"Exception creating spool: {e}")
             return None
@@ -534,7 +704,12 @@ class SpoolmanClient:
             return None
 
         # Create the spool with the tray UUID
-        spool = self.create_spool(filament["id"], tray_uuid, weight_int)
+        spool = self.create_spool(
+            filament["id"],
+            tray_uuid,
+            weight_int,
+            tag_uid=tray_data.get("tag_uid"),
+        )
         return spool
 
     def _get_or_create_vendor(self, vendor_name):
@@ -578,6 +753,10 @@ class SpoolmanClient:
         if query_string:
             return f"{self.endpoint}/api/v1/{route}?{query_string}"
         return f"{self.endpoint}/api/v1/{route}"
+
+
+def _is_zero_identifier(value):
+    return bool(value) and set(str(value)) == {"0"}
 
 
 def new_client(url=None) -> SpoolmanClient:

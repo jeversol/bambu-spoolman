@@ -52,10 +52,115 @@ class SpoolmanClientTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             client.consume_spool(42, length=10, weight=5)
 
+    def test_native_tag_support_uses_spoolman_version(self):
+        client = SpoolmanClient("http://spoolman.test")
+        client.get_info = Mock(return_value={"version": "v0.27.0"})
+
+        self.assertTrue(client.supports_native_tags())
+        self.assertTrue(client.supports_native_tags())
+        client.get_info.assert_called_once_with()
+
+    def test_old_spoolman_does_not_support_native_tags(self):
+        client = SpoolmanClient("http://spoolman.test")
+        client.get_info = Mock(return_value={"version": "0.26.1"})
+
+        self.assertFalse(client.supports_native_tags())
+
+    @patch("bambu_spoolman.spoolman.requests.post")
+    def test_scan_tag_reports_bambu_reader_and_returns_spool(self, post):
+        response = Mock()
+        response.json.return_value = {"spool": {"id": 32}}
+        post.return_value = response
+        client = SpoolmanClient("http://spoolman.test")
+        client._supports_native_tags = True
+
+        spool = client.scan_tag(
+            "A1B2C3D4", reader_id="bambu-ams-1-slot-1", name="Bambu AMS 1 slot 1"
+        )
+
+        self.assertEqual(spool, {"id": 32})
+        post.assert_called_once_with(
+            "http://spoolman.test/api/v1/tag/scan",
+            json={
+                "uid": "A1B2C3D4",
+                "format": "bambu",
+                "reader_id": "bambu-ams-1-slot-1",
+                "name": "Bambu AMS 1 slot 1",
+            },
+            verify=True,
+            timeout=30.0,
+        )
+
+    @patch("bambu_spoolman.spoolman.requests.get")
+    def test_tray_uuid_lookup_prefers_native_tag(self, get):
+        response = Mock()
+        response.json.return_value = [{"id": 32}]
+        get.return_value = response
+        client = SpoolmanClient("http://spoolman.test")
+        client._supports_native_tags = True
+
+        spool = client.lookup_by_tray_uuid("AABBCCDD")
+
+        self.assertEqual(spool, {"id": 32})
+        get.assert_called_once_with(
+            "http://spoolman.test/api/v1/spool?tag=AABBCCDD&allow_archived=false",
+            verify=True,
+            timeout=30.0,
+        )
+
+    @patch("bambu_spoolman.spoolman.requests.post")
+    def test_set_tray_uuid_uses_native_tags_without_custom_field(self, post):
+        post.return_value = Mock()
+        client = SpoolmanClient("http://spoolman.test")
+        client._supports_native_tags = True
+        client.get_spool = Mock(return_value={"id": 32, "extra": {}, "tags": []})
+
+        with patch.dict(os.environ, {}, clear=True):
+            result = client.set_tray_uuid(32, "AABBCCDD")
+
+        self.assertTrue(result)
+        post.assert_called_once_with(
+            "http://spoolman.test/api/v1/spool/32/tag",
+            json={"uid": "AABBCCDD", "format": "bambu-tray"},
+            verify=True,
+            timeout=30.0,
+        )
+
+    @patch("bambu_spoolman.spoolman.requests.delete")
+    def test_unlink_removes_only_tags_managed_by_this_integration(self, delete):
+        delete.return_value = Mock()
+        client = SpoolmanClient("http://spoolman.test")
+        client._supports_native_tags = True
+        client.get_spool = Mock(
+            return_value={
+                "id": 32,
+                "extra": {},
+                "tags": [
+                    {"uid": "AAAA", "format": "bambu"},
+                    {"uid": "BBBB", "format": "bambu-tray"},
+                    {"uid": "CCCC", "format": "ntag"},
+                ],
+            }
+        )
+
+        with patch.dict(os.environ, {}, clear=True):
+            result = client.set_tray_uuid(32, "")
+
+        self.assertTrue(result)
+        self.assertEqual(delete.call_count, 2)
+        self.assertEqual(
+            [request_call.args[0] for request_call in delete.call_args_list],
+            [
+                "http://spoolman.test/api/v1/spool/32/tag/AAAA",
+                "http://spoolman.test/api/v1/spool/32/tag/BBBB",
+            ],
+        )
+
     @patch("bambu_spoolman.spoolman.requests.patch")
     def test_empty_tray_uuid_removes_rfid_field(self, patch_request):
         patch_request.return_value = Mock()
         client = SpoolmanClient("http://spoolman.test")
+        client._supports_native_tags = False
         client.get_spool = Mock(
             return_value={"id": 32, "extra": {"rfid_tag": '"tag-32"'}}
         )

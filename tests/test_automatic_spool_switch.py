@@ -10,14 +10,17 @@ from bambu_spoolman.broker.automatic_spool_switch import (
 )
 
 
-def printer_status(uuid):
+def printer_status(uuid, tag_uid=None):
+    tray = {"id": "0", "tray_uuid": uuid}
+    if tag_uid is not None:
+        tray["tag_uid"] = tag_uid
     return {
         "print": {
             "ams": {
                 "ams": [
                     {
                         "id": "0",
-                        "tray": [{"id": "0", "tray_uuid": uuid}],
+                        "tray": [tray],
                     }
                 ]
             }
@@ -100,6 +103,51 @@ class AutomaticSpoolSwitchOverrideTests(unittest.TestCase):
         settings = self.read_settings()
         self.assertEqual(settings["locked_trays"], [])
         self.assertEqual(settings["trays"], {"0": 32})
+
+    def test_initial_sync_resolves_and_reports_a_native_physical_tag(self):
+        spool = {"id": 47}
+        self.client.scan_tag.return_value = spool
+        self.client.link_bambu_tags.return_value = True
+        self.switch.tray_mapping = {}
+
+        self.switch._initial_sync(
+            printer_status("AABBCCDDEEFF00112233445566778899", "A1B2C3D4")["print"]
+        )
+
+        self.assertEqual(self.read_settings()["trays"], {"0": 47})
+        self.client.scan_tag.assert_called_once_with(
+            "A1B2C3D4",
+            reader_id="bambu-ams-1-slot-1",
+            name="Bambu AMS 1 slot 1",
+        )
+        self.client.link_bambu_tags.assert_called_once_with(
+            47,
+            tray_uuid="AABBCCDDEEFF00112233445566778899",
+            tag_uid="A1B2C3D4",
+        )
+
+    def test_second_physical_tag_is_learned_when_tray_uuid_is_unchanged(self):
+        spool = {"id": 32}
+        self.switch.tray_mapping = {0: "AABBCCDDEEFF00112233445566778899"}
+        self.switch.tag_mapping = {0: "A1B2C3D4"}
+        self.client.scan_tag.return_value = None
+        self.client.lookup_by_tray_uuid.return_value = spool
+        self.client.link_bambu_tags.return_value = True
+
+        self.switch._sync(
+            printer_status("AABBCCDDEEFF00112233445566778899", "11223344")["print"]
+        )
+
+        self.client.lookup_by_tray_uuid.assert_called_once_with(
+            "AABBCCDDEEFF00112233445566778899"
+        )
+        self.client.link_bambu_tags.assert_called_once_with(
+            32,
+            tray_uuid="AABBCCDDEEFF00112233445566778899",
+            tag_uid="11223344",
+        )
+        self.assertEqual(self.client.scan_tag.call_count, 2)
+        self.assertEqual(self.switch.tag_mapping, {0: "11223344"})
 
     def test_removing_spool_clears_override_and_mapping(self):
         settings = self.read_settings()

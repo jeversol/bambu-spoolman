@@ -41,14 +41,16 @@ Set the following environment variables:
 * `PRINTER_SERIAL` -- The serial number of your printer
 * `PRINTER_ACCESS_CODE` -- The access code for your printer
 * `BAMBU_SPOOLMAN_CONFIG` -- A directory to store the configuration file (default: `/config`)
-* `SPOOLMAN_RFID_FIELD_KEY` -- Exact **Key** of the Spoolman spool-level Text custom field where Bambu RFID UUIDs are saved (for example, `rfid_tag`). This enables linking detected tags to existing spools and automatic slot mapping. The legacy name `SPOOLMAN_SPOOL_FIELD_NAME` is still accepted.
-* `SPOOLMAN_AUTO_CREATE_SPOOLS` -- Create a matching Spoolman spool when an unknown Bambu RFID tag is detected. RFID mapping must also be configured with `SPOOLMAN_RFID_FIELD_KEY`.
+* `SPOOLMAN_RFID_FIELD_KEY` -- Optional compatibility fallback for Spoolman older than v0.27.0. Set it to the exact **Key** of a spool-level Text custom field where Bambu logical spool UUIDs are saved (for example, `rfid_tag`). On Spoolman v0.27.0 and newer, native tags are used automatically and this setting may be removed after existing mappings have been encountered and migrated. The legacy name `SPOOLMAN_SPOOL_FIELD_NAME` is still accepted.
+* `SPOOLMAN_AUTO_CREATE_SPOOLS` -- Create a matching Spoolman spool when an unknown Bambu RFID tag is detected. Requires Spoolman v0.27.0 or `SPOOLMAN_RFID_FIELD_KEY`.
 * `SPOOLMAN_AMS_FIELD_NAME` -- Spoolman field to store which AMS a spool is in
 * `SPOOLMAN_TRAY_FIELD_NAME` -- Spoolman field to store which tray a spool is in
 
 ## Usage
 
 Once deployed, the web ui can be used to configure the mapping of AMS spool trays -> Spoolman spool ids. An initial connection to the printer is needed to determine the number of AMS systems attached.
+
+With Spoolman v0.27.0 or newer, detected Bambu tags are registered through Spoolman's native tag API. Bambu spools expose a stable logical `tray_uuid` plus a physical `tag_uid` for each RFID label. Bambu Spoolman links both: the logical ID keeps automatic mapping stable when a spool is flipped, while the physical IDs work with Spoolman's tag scanner and browser pairing features. When the other side of a spool is first observed, its second physical tag is learned automatically.
 
 ## Logging
 

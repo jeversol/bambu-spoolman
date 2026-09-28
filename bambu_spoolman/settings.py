@@ -71,8 +71,6 @@ def _load_settings():
         with open(settings_file_path) as f:
             data = json.load(f)
 
-            if get_rfid_field_key() is None:
-                data["locked_trays"] = []
             return data
     return {
         "trays": {},
