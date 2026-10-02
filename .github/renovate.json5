@@ -4,6 +4,13 @@
   timezone: 'America/New_York',
   prConcurrentLimit: 5,
   dependencyDashboard: true,
+  // Direct-dependency updates refresh only the packages involved in that
+  // update. Refresh every lockfile weekly as a separate, reviewable PR so
+  // transitive dependencies do not remain pinned indefinitely.
+  lockFileMaintenance: {
+    enabled: true,
+    schedule: ['before 4am on monday'],
+  },
   // Versions embedded in shell scripts or action inputs are not discovered by
   // Renovate's built-in managers. Keep those pins on the same update path as
   // their normal package/image declarations.
