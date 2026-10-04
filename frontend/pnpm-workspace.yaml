@@ -1,3 +1,5 @@
+pmOnFail: ignore
+
 allowBuilds:
   protobufjs: false
   sharp: false
