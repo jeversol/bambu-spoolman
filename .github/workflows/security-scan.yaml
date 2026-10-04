@@ -23,7 +23,23 @@ jobs:
         with:
           ref: main
       - name: Audit deployed lockfiles
-        run: sh scripts/security-audit.sh
+        run: sh scripts/security-audit.sh gate
+      - name: Report development dependency vulnerabilities
+        id: development_audit
+        continue-on-error: true
+        run: sh scripts/security-audit.sh report
+      - name: Summarize development dependency findings
+        if: steps.development_audit.outcome == 'failure'
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## Development dependency vulnerabilities detected
+
+          The complete dependency audit found a vulnerability in a build or
+          development dependency. This is reported for remediation but does not
+          itself block publishing. The blocking gate separately enforces runtime
+          dependencies, critical npm findings, and the final production image.
+          See the preceding audit step and the repository's Dependabot alerts.
+          EOF
       - name: Log in
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
