@@ -62,3 +62,36 @@ segmentation, reverse-proxy configuration, and ensuring that container port
 Compromise of an already trusted operator or trusted internal host is outside
 the authentication boundary unless it provides an additional privilege or
 crosses another security boundary.
+
+## Dependency Vulnerability Enforcement
+
+Dependabot supplies vulnerability alerts, and Renovate is the only automated
+dependency-update pull-request generator. Dependabot security updates remain
+disabled to prevent duplicate update pull requests. Renovate vulnerability
+updates are created immediately without the normal release-age delay, but they
+are not automatically merged.
+
+Required pull-request and publishing checks enforce the following policy:
+
+- High and critical vulnerabilities in runtime dependencies block changes and
+  releases, even when no patched version is available.
+- Critical npm vulnerabilities in build or development dependencies also
+  block. pnpm exposes both dependency scope and advisory severity, allowing
+  this distinction to be enforced directly.
+- The dependency-review check blocks pull requests that introduce new high or
+  critical vulnerabilities in any dependency scope.
+- Other existing findings limited to build or development dependencies are
+  reported by the scheduled security workflow and tracked by Dependabot, but
+  do not block unrelated changes or releases. This includes Python development
+  findings because pip-audit does not expose a severity threshold suitable for
+  the same gate.
+- The final production image is independently scanned for high and critical
+  operating-system and library vulnerabilities before publication.
+
+This distinction prevents an unpatched development-tool advisory from
+deadlocking the repository while preserving strict enforcement for deployed
+code, critical npm build-chain findings, and newly introduced risk.
+
+An audit exception must be limited to a specific advisory and document its
+scope, exploitability, compensating controls, and review date. Broad exceptions
+such as ignoring every unfixable advisory are not permitted.
