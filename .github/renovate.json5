@@ -4,6 +4,12 @@
   timezone: 'America/New_York',
   prConcurrentLimit: 5,
   dependencyDashboard: true,
+  // Keep human-reviewed updates current too, so branch freshness requirements
+  // do not depend on manually requesting a rebase after main changes.
+  rebaseWhen: 'behind-base-branch',
+  // CI starts on pull_request, so open PRs without waiting for branch checks.
+  // Release-age checks and required CI still gate automerge.
+  prCreation: 'immediate',
   // Dependabot supplies vulnerability intelligence; Renovate is the sole PR
   // generator. Security fixes bypass normal schedules and release-age delays,
   // but still require the repository's tests and human review.
