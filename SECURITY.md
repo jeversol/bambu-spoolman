@@ -66,7 +66,9 @@ crosses another security boundary.
 ## Dependency Vulnerability Enforcement
 
 Dependabot supplies vulnerability alerts, and Renovate is the only automated
-dependency-update pull-request generator. Dependabot security updates remain
+dependency-update pull-request generator. Routine PRs are created and rebased
+without waiting for release age; Renovate waits for the configured release age
+and passing checks before automerging. Dependabot security updates remain
 disabled to prevent duplicate update pull requests. Renovate vulnerability
 updates are created immediately without the normal release-age delay, but they
 are not automatically merged.
@@ -85,8 +87,11 @@ Required pull-request and publishing checks enforce the following policy:
   do not block unrelated changes or releases. This includes Python development
   findings because pip-audit does not expose a severity threshold suitable for
   the same gate.
-- The final production image is independently scanned for high and critical
-  operating-system and library vulnerabilities before publication.
+- Python audit findings are reported by the scheduled workflow. Python runtime
+  severity is enforced by the production-image scan, since pip-audit has no
+  severity threshold.
+- The final production image is scanned for high and critical operating-system
+  and library vulnerabilities in pull requests and before publication.
 
 This distinction prevents an unpatched development-tool advisory from
 deadlocking the repository while preserving strict enforcement for deployed

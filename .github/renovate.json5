@@ -4,12 +4,10 @@
   timezone: 'America/New_York',
   prConcurrentLimit: 5,
   dependencyDashboard: true,
-  // Keep human-reviewed updates current too, so branch freshness requirements
-  // do not depend on manually requesting a rebase after main changes.
   rebaseWhen: 'behind-base-branch',
-  // CI starts on pull_request, so open PRs without waiting for branch checks.
-  // Release-age checks and required CI still gate automerge.
   prCreation: 'immediate',
+  // Release age delays automerge, not branch creation or rebasing.
+  internalChecksFilter: 'none',
   // Dependabot supplies vulnerability intelligence; Renovate is the sole PR
   // generator. Security fixes bypass normal schedules and release-age delays,
   // but still require the repository's tests and human review.
@@ -29,9 +27,7 @@
     enabled: true,
     schedule: ['before 4am on monday'],
   },
-  // Versions embedded in shell scripts or action inputs are not discovered by
-  // Renovate's built-in managers. Keep those pins on the same update path as
-  // their normal package/image declarations.
+  // Track shell-script pins alongside the built-in package and image managers.
   customManagers: [
     {
       customType: 'regex',
@@ -51,17 +47,10 @@
       depNameTemplate: 'node',
       datasourceTemplate: 'docker',
     },
-    {
-      customType: 'regex',
-      managerFilePatterns: ['/^\\.github/workflows/[^/]+\\.ya?ml$/'],
-      matchStrings: [
-        'version: (?<currentValue>v?\\d+\\.\\d+\\.\\d+) # renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)',
-      ],
-    },
   ],
-  // GitHub branch protection requires both CI jobs before platform automerge.
+  // Renovate checks release age and CI before merging; GitHub rules still apply.
   automergeType: 'pr',
-  platformAutomerge: true,
+  platformAutomerge: false,
   packageRules: [
     {
       description: 'Update the Renovate pre-commit hook once a week',
@@ -110,17 +99,17 @@
       allowedVersions: '/^24-alpine$/',
     },
     {
-      description: 'Wait before proposing major updates',
+      description: 'Apply release-age cooldown to major updates',
       matchUpdateTypes: ['major'],
       minimumReleaseAge: '14 days',
     },
     {
-      description: 'Wait before proposing minor updates',
+      description: 'Wait before automerging minor updates',
       matchUpdateTypes: ['minor'],
       minimumReleaseAge: '7 days',
     },
     {
-      description: 'Wait before proposing patch updates',
+      description: 'Wait before automerging patch updates',
       matchUpdateTypes: ['patch'],
       minimumReleaseAge: '3 days',
     },

@@ -24,20 +24,20 @@ jobs:
           ref: main
       - name: Audit deployed lockfiles
         run: sh scripts/security-audit.sh gate
-      - name: Report development dependency vulnerabilities
-        id: development_audit
+      - name: Report dependency vulnerabilities
+        id: dependency_audit
         continue-on-error: true
         run: sh scripts/security-audit.sh report
-      - name: Summarize development dependency findings
-        if: steps.development_audit.outcome == 'failure'
+      - name: Summarize dependency findings
+        if: steps.dependency_audit.outcome == 'failure'
         run: |
           cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
-          ## Development dependency vulnerabilities detected
+          ## Dependency vulnerabilities detected
 
-          The complete dependency audit found a vulnerability in a build or
-          development dependency. This is reported for remediation but does not
-          itself block publishing. The blocking gate separately enforces runtime
-          dependencies, critical npm findings, and the final production image.
+          The complete dependency audit reported findings or could not finish.
+          This report does not itself block publishing. The blocking checks
+          enforce npm severity thresholds and high/critical findings in the
+          production image.
           See the preceding audit step and the repository's Dependabot alerts.
           EOF
       - name: Log in
@@ -55,4 +55,4 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: false
           exit-code: "1"
-          version: v0.76.0 # renovate: datasource=github-releases depName=aquasecurity/trivy
+          version: v0.76.0
