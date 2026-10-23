@@ -15,23 +15,15 @@ case "$audit_mode" in
         ;;
 esac
 
-docker build --target builder --tag "$backend_image" "$repository_root"
-
 audit_backend() {
+    docker build --target builder --tag "$backend_image" "$repository_root" || return
     docker run --rm \
         --env AUDIT_MODE="$audit_mode" \
         --entrypoint /bin/sh \
-        "$backend_image" -c '
+        "$backend_image" -ec '
     cd /app
-    if [ "$AUDIT_MODE" = gate ]; then
-        # Release enforcement covers dependencies copied into the runtime image.
-        uv export --locked --no-dev --no-emit-project \
-            --format requirements-txt --output-file /tmp/audit-requirements.txt >/dev/null
-    else
-        # Scheduled reporting also covers build and development tools.
-        uv export --locked --no-emit-project \
-            --format requirements-txt --output-file /tmp/audit-requirements.txt >/dev/null
-    fi
+    uv export --locked --no-emit-project \
+        --format requirements-txt --output-file /tmp/audit-requirements.txt >/dev/null
     uvx pip-audit==2.10.1 --requirement /tmp/audit-requirements.txt \
         --progress-spinner off
 '
@@ -43,7 +35,7 @@ audit_frontend() {
         --volume "$repository_root/frontend:/workspace:ro" \
         --workdir /workspace \
         node:24-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 \
-        /bin/sh -c '
+        /bin/sh -ec '
         pnpm_version=$(node -p "require(\"./package.json\").packageManager.split(\"@\")[1]")
         npm install --global "pnpm@$pnpm_version" >/dev/null
         if [ "$AUDIT_MODE" = gate ]; then
@@ -59,7 +51,7 @@ audit_frontend() {
 }
 
 if [ "$audit_mode" = gate ]; then
-    audit_backend
+    # Python runtime severity is enforced by the production-image scan.
     audit_frontend
 else
     audit_status=0
