@@ -42,7 +42,7 @@ audit_frontend() {
         --env AUDIT_MODE="$audit_mode" \
         --volume "$repository_root/frontend:/workspace:ro" \
         --workdir /workspace \
-        node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 \
+        node:24-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 \
         /bin/sh -c '
         pnpm_version=$(node -p "require(\"./package.json\").packageManager.split(\"@\")[1]")
         npm install --global "pnpm@$pnpm_version" >/dev/null
