@@ -74,9 +74,7 @@ class SecurityAuditTests(unittest.TestCase):
             ],
         )
         self.assertFalse(
-            any(
-                c[0] in ("uv", "uvx") or c[:2] == ["docker", "build"] for c in commands
-            )
+            any(c[0] in ("uv", "uvx") or c[:2] == ["docker", "build"] for c in commands)
         )
 
     def test_runtime_high_findings_fail_gate(self):
