@@ -1,160 +1,119 @@
 # bambu-spoolman
 
-BambuLab integration for Spoolman.
+Track Bambu Lab printer filament usage in [Spoolman](https://github.com/Donkie/Spoolman).
+The app estimates usage from the print's G-code and updates Spoolman as each layer
+finishes. A web UI maps AMS trays to Spoolman spools.
 
-This program will monitor a Bambulab printer and synchronize usage automatically to [Spoolman](https://github.com/Donkie/Spoolman). It does this by listening for prints to be started, parsing the gcode and estimating the filament usage per layer. As layers are completed, the usage for that layer will be pushed to Spoolman.
-
-This project was originally derived from
-[`mrkirby153/bambu-spoolman`](https://github.com/mrkirby153/bambu-spoolman) and
-retains its Git history and MIT license. It is now independently maintained for
-a personal deployment and is not intended to remain synchronized with the
-original project.
+This is an independently maintained fork of
+[`mrkirby153/bambu-spoolman`](https://github.com/mrkirby153/bambu-spoolman),
+retaining its Git history and MIT license.
 
 ## Quickstart
+
+> [!WARNING]
+> The app has no built-in authentication. Keep the web UI and gRPC service on a
+> trusted private network, or use an authenticating reverse proxy for remote access.
+
+Download the configuration:
 
 ```sh
 curl -o .env https://raw.githubusercontent.com/jeversol/bambu-spoolman/main/.env.example
 curl -o docker-compose.yaml https://raw.githubusercontent.com/jeversol/bambu-spoolman/main/docker-compose.yaml
 ```
 
-Update `.env` with the appropriate settings. See below for a list of configuration options.
+Set `SPOOLMAN_URL`, `PRINTER_IP`, `PRINTER_SERIAL`, and `PRINTER_ACCESS_CODE` in
+`.env`, then start the app:
 
-Once the `.env` file is updated, start the app with `docker compose up -d`
+```sh
+docker compose up -d
+```
 
-## Security
-
-> [!WARNING]
-> Bambu Spoolman does not provide built-in user authentication. Deploy it only
-> on a trusted private network. Do not expose the web UI or gRPC service
-> directly to the Internet. Use an authenticating reverse proxy if access
-> outside the trusted network is required.
+Open `http://<docker-host>:8080` and map your AMS trays to Spoolman spool IDs.
+The app must connect to the printer before it can discover the attached AMS units.
 
 ## Configuration
 
-Set the following environment variables:
+Set these values in `.env`. The supplied Compose file stores settings and print
+checkpoints in a persistent volume.
 
-* `SPOOLMAN_URL` -- The base URL for your spoolman instance (i.e. `http://localhost:7912`)
-  * `SPOOLMAN_VERIFY` -- Set to `false` to disable SSL verification for spoolman requests (Useful for self-signed certificates)
-* `BAMBU_SPOOLMAN_HTTP_TIMEOUT` -- Timeout in seconds for Spoolman and printer file HTTP requests (default: `30`)
-* `LOGURU_LEVEL` -- Container log verbosity (`INFO` by default; use `DEBUG` for per-message summaries or `TRACE` for raw MQTT payloads)
-* `PRINTER_IP` -- The IP address of your printer
-* `PRINTER_SERIAL` -- The serial number of your printer
-* `PRINTER_ACCESS_CODE` -- The access code for your printer
-* `BAMBU_SPOOLMAN_CONFIG` -- A directory to store the configuration file (default: `/config`)
-* `SPOOLMAN_RFID_FIELD_KEY` -- Optional compatibility fallback for Spoolman older than v0.27.0. Set it to the exact **Key** of a spool-level Text custom field where Bambu logical spool UUIDs are saved (for example, `rfid_tag`). On Spoolman v0.27.0 and newer, native tags are used automatically and this setting may be removed after existing mappings have been encountered and migrated. The legacy name `SPOOLMAN_SPOOL_FIELD_NAME` is still accepted.
-* `SPOOLMAN_AUTO_CREATE_SPOOLS` -- Create a matching Spoolman spool when an unknown Bambu RFID tag is detected. Requires Spoolman v0.27.0 or `SPOOLMAN_RFID_FIELD_KEY`.
-* `SPOOLMAN_AMS_FIELD_NAME` -- Spoolman field to store which AMS a spool is in
-* `SPOOLMAN_TRAY_FIELD_NAME` -- Spoolman field to store which tray a spool is in
+| Variable | Purpose / default |
+| --- | --- |
+| `SPOOLMAN_URL` | Spoolman base URL, reachable from the container. |
+| `PRINTER_IP` | Printer IP address. |
+| `PRINTER_SERIAL` | Printer serial number. |
+| `PRINTER_ACCESS_CODE` | Printer access code. |
+| `BAMBU_SPOOLMAN_PORT` | Host port for the web UI; `8080` in the example configuration. |
+| `BAMBU_SPOOLMAN_CONFIG` | Configuration directory inside the container; default `/config`. |
+| `BAMBU_SPOOLMAN_HTTP_TIMEOUT` | Timeout for Spoolman and printer file HTTP requests; default `30` seconds. |
+| `LOGURU_LEVEL` | Log verbosity; default `INFO`. Use `DEBUG` for MQTT summaries or `TRACE` for raw payloads. |
+| `SPOOLMAN_VERIFY` | Set to `false` to disable TLS certificate verification for Spoolman. |
+| `SPOOLMAN_RFID_FIELD_KEY` | Legacy RFID mapping field key for Spoolman older than v0.27.0; see below. |
+| `SPOOLMAN_AUTO_CREATE_SPOOLS` | Set to `true` to create spools for unknown Bambu RFID tags. Requires Spoolman v0.27.0+ or `SPOOLMAN_RFID_FIELD_KEY`. |
+| `SPOOLMAN_AMS_FIELD_NAME` | Spoolman custom field for the AMS index. |
+| `SPOOLMAN_TRAY_FIELD_NAME` | Spoolman custom field for the tray index. |
 
-## Usage
+### RFID mapping
 
-Once deployed, the web ui can be used to configure the mapping of AMS spool trays -> Spoolman spool ids. An initial connection to the printer is needed to determine the number of AMS systems attached.
+Spoolman v0.27.0+ uses native tags automatically. The app links a spool's logical
+ID and both physical RFID labels, so mappings survive flipping the spool and
+work with Spoolman's tag scanner. The second label is learned when first detected.
 
-With Spoolman v0.27.0 or newer, detected Bambu tags are registered through Spoolman's native tag API. Bambu spools expose a stable logical `tray_uuid` plus a physical `tag_uid` for each RFID label. Bambu Spoolman links both: the logical ID keeps automatic mapping stable when a spool is flipped, while the physical IDs work with Spoolman's tag scanner and browser pairing features. When the other side of a spool is first observed, its second physical tag is learned automatically.
+For older Spoolman versions, create a spool-level Text custom field and set
+`SPOOLMAN_RFID_FIELD_KEY` to its exact key, such as `rfid_tag`. The legacy variable
+`SPOOLMAN_SPOOL_FIELD_NAME` is also accepted. After upgrading Spoolman, existing
+mappings migrate as their spools are encountered; remove the fallback once migration
+is complete.
 
-## Logging
+### Custom container deployments
 
-Container logs use searchable `event=... key=value` messages at `INFO` for MQTT connectivity, print lifecycle, layer accounting, successful filament consumption, checkpoints, AMS/RFID changes, and tray assignments. Set `LOGURU_LEVEL=DEBUG` for MQTT message summaries and processing times, or `TRACE` for complete MQTT payloads. Raw payloads are especially verbose and may contain printer/job metadata.
+The supplied Compose file includes the required permissions and writable mounts.
+For custom Docker or Kubernetes configurations:
 
-Each container logs its release/ref, CI build number, Git revision, and build timestamp in the `event=service_start` message. Locally built images use `version=local build_number=local` unless those Docker build arguments are supplied explicitly.
+- Allow startup as root with `CHOWN`, `SETGID`, and `SETUID`. The container fixes
+  data ownership, then runs the app as `10001:10001` without capabilities.
+- Do not force `runAsUser` or `runAsNonRoot`.
+- Keep `/config`, `/tmp`, and `/app/frontend/.next/cache` writable. The rest of the
+  filesystem can be read-only, with privilege escalation disabled.
+- If storage denies ownership changes, provision `/config` with ownership
+  `10001:10001`.
 
-## Dependency and image security
-
-Production builds use frozen Python and pnpm lockfiles, version-and-digest-pinned base images, and commit-pinned GitHub Actions. Before an image is published, the workflow runs backend tests and linting, builds and lints the frontend, audits both dependency graphs, smoke-tests the assembled container, and rejects high or critical findings in the final image. Published images include an immutable `sha-<commit>` tag, an SBOM, and provenance metadata.
-
-### Container permissions and upgrades
-
-At startup, the image automatically changes ownership of existing settings and
-print checkpoints to the dedicated numeric user and group `10001:10001`. It
-then permanently drops root and all effective capabilities before starting
-either application process. No manual data migration is required for ordinary
-Docker volumes or Kubernetes persistent volumes.
-
-Existing deployments that use the runtime defaults continue to work without a
-Compose or manifest update because the default Docker and Kubernetes capability
-sets include the three capabilities needed during initialization. Updating to
-the supplied Compose file is recommended because it also enables a read-only
-root filesystem, prevents privilege escalation, and drops every capability
-except `CHOWN`, `SETGID`, and `SETUID`.
-
-Existing deployments must be changed before upgrading if they do any of the
-following:
-
-- Drop all capabilities without adding `CHOWN`, `SETGID`, and `SETUID` back.
-- Set Kubernetes `runAsNonRoot: true` or force `runAsUser`, which prevents the
-  automatic ownership migration and identity transition.
-- Mount `/config` read-only.
-
-For Kubernetes, the container security context can use:
-
-```yaml
-securityContext:
-  allowPrivilegeEscalation: false
-  readOnlyRootFilesystem: true
-  capabilities:
-    drop: ["ALL"]
-    add: ["CHOWN", "SETGID", "SETUID"]
-```
-
-Do not set `runAsUser` or `runAsNonRoot` on this container. Mount writable
-volumes at `/config`, `/tmp`, and `/app/frontend/.next/cache`. Storage backends
-that deny ownership changes, such as some root-squashed NFS exports, must
-instead provision `/config` with ownership `10001:10001`.
-
-Renovate proposes npm, Python, Docker, security-tool, and GitHub Actions updates against the `main` branch. Routine patch and minor updates are grouped after a short cooldown; major updates remain separate for explicit review. Renovate also opens a weekly, separately reviewable lockfile-maintenance PR to refresh transitive Python and npm dependencies that are not independently tracked as declared dependencies. Python and Node container images stay on the minor or LTS major supported by the project, so runtime upgrades are deliberate changes that also update project constraints, lockfiles, and hard-coded runtime paths. Coupled framework packages are updated together, and the pnpm version in `frontend/package.json` is the single source used by both image builds and dependency audits. A weekly workflow rescans both the deployed lockfiles and the published `latest` image because newly disclosed vulnerabilities can affect an image that was clean when built.
-
-### Python version policy
-
-Production supports one Python minor at a time and uses an immutable container
-digest. Renovate refreshes that digest under the supported minor tag, providing
-Python patch releases and Alpine security updates without making builds
-unrepeatable. Those digest-only refreshes may automerge after CI; changing the
-supported Python minor may not.
-
-The `Test next Python` workflow runs weekly against the next Python release on
-Alpine. During the prerelease period its scheduled result is an early warning
-and does not block other delivery. Before promoting a new minor, run that
-workflow manually; a manual failure is a release blocker.
-
-Promote a Python minor in one reviewed pull request:
-
-1. Change the production base image and digest in `Dockerfile`.
-2. Update `requires-python` in `pyproject.toml` and regenerate `uv.lock` with
-   the new interpreter.
-3. Update any version-specific runtime paths in `Dockerfile`.
-4. Move both Python `allowedVersions` rules in Renovate to the new minor.
-5. Run the normal CI pipeline and a strict manual `Test next Python` workflow
-   while it still targets the candidate minor.
-6. After promotion, move `.github/docker/Dockerfile.next-python` and its
-   workflow build argument to the subsequent Python release.
-
-Do not merge a Renovate change that updates only one of those locations. A new
-Python minor is an application migration, not a routine dependency bump.
-
-Run the current dependency audits locally with:
+### Logs
 
 ```sh
-sh scripts/security-audit.sh
+docker compose logs -f bambu-spoolman
 ```
+
+Logs include connectivity, print progress, filament consumption, and tray changes.
+The `event=service_start` message identifies the running build. `TRACE` logs are
+verbose and may include printer and job metadata.
 
 ## Development
 
-Run the same tests and linters used in CI with Docker:
+Run the tests and linters used in CI:
 
 ```sh
 docker build --target verify .
 ```
 
-Build and smoke-test the application image with:
+Build and smoke-test the image:
 
 ```sh
 docker build --tag bambu-spoolman:local .
 sh scripts/container-smoke-test.sh bambu-spoolman:local
 ```
 
-## Untested things
+Audit dependencies:
 
-* External spools
-* LAN only prints
-* Custom filament/layer change gcode (`M620` is used to detect filament changes and `M73` is used to detect layer changes)
-* More than 1 AMS unit (I only have one, but this should support multiple AMS units)
+```sh
+sh scripts/security-audit.sh
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the Git and pull request workflow.
+
+## Untested configurations
+
+- External spools.
+- LAN-only prints.
+- Custom filament or layer-change G-code. Detection uses `M620` for filament
+  changes and `M73` for layer changes.
+- Multiple AMS units.
