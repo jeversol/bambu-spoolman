@@ -1,3 +1,7 @@
+# Disable pnpm's default 24h release-age check; Renovate's minimumReleaseAge
+# (.github/renovate.json5) controls when new versions are adopted.
+minimumReleaseAge: 0
+
 pmOnFail: ignore
 
 allowBuilds:

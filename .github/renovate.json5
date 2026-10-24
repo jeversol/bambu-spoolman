@@ -4,18 +4,22 @@
   timezone: 'America/New_York',
   prConcurrentLimit: 5,
   dependencyDashboard: true,
-  rebaseWhen: 'behind-base-branch',
+  // main doesn't require PRs to be up to date (publish re-verifies main), so
+  // only rebase when a branch actually conflicts.
+  rebaseWhen: 'conflicted',
   prCreation: 'immediate',
-  // Release age delays automerge, not branch creation or rebasing.
-  internalChecksFilter: 'none',
+  // Release age is enforced here only (pnpm's check is disabled), and Renovate
+  // waits it out before creating a branch.
+  minimumReleaseAge: '1 day',
+  internalChecksFilter: 'strict',
   // Dependabot supplies vulnerability intelligence; Renovate is the sole PR
-  // generator. Security fixes bypass normal schedules and release-age delays,
-  // but still require the repository's tests and human review.
+  // generator. Security fixes bypass normal schedules and require the
+  // repository's tests and human review. Only critical fixes skip the release
+  // age (see packageRules).
   vulnerabilityAlerts: {
     enabled: true,
     labels: ['security'],
     prCreation: 'immediate',
-    minimumReleaseAge: null,
     rangeStrategy: 'update-lockfile',
     vulnerabilityFixStrategy: 'lowest',
     automerge: false,
@@ -99,19 +103,11 @@
       allowedVersions: '/^24-alpine$/',
     },
     {
-      description: 'Apply release-age cooldown to major updates',
-      matchUpdateTypes: ['major'],
-      minimumReleaseAge: '14 days',
-    },
-    {
-      description: 'Wait before automerging minor updates',
-      matchUpdateTypes: ['minor'],
-      minimumReleaseAge: '7 days',
-    },
-    {
-      description: 'Wait before automerging patch updates',
-      matchUpdateTypes: ['patch'],
-      minimumReleaseAge: '3 days',
+      description: 'Ship critical security fixes without the release-age wait',
+      matchJsonata: [
+        "isVulnerabilityAlert = true and $uppercase(vulnerabilitySeverity) = 'CRITICAL'",
+      ],
+      minimumReleaseAge: null,
     },
     {
       description: 'Group minor and patch npm updates',
