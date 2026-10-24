@@ -2,6 +2,8 @@
 
 set -eu
 
+echo "event=container_runtime node=$(node --version) python=$(/venv/bin/python -c 'import platform; print(platform.python_version())')"
+
 node /app/frontend/server.js &
 frontend_pid=$!
 

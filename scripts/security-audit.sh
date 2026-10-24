@@ -4,6 +4,7 @@ set -eu
 
 repository_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 backend_image="bambu-spoolman:dependency-audit"
+frontend_image="bambu-spoolman:frontend-audit"
 audit_mode=${1:-gate}
 
 case "$audit_mode" in
@@ -30,14 +31,14 @@ audit_backend() {
 }
 
 audit_frontend() {
+    docker build --target frontend_toolchain --tag "$frontend_image" "$repository_root" || return
     docker run --rm \
         --env AUDIT_MODE="$audit_mode" \
         --volume "$repository_root/frontend:/workspace:ro" \
         --workdir /workspace \
-        node:24-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 \
-        /bin/sh -ec '
-        pnpm_version=$(node -p "require(\"./package.json\").packageManager.split(\"@\")[1]")
-        npm install --global "pnpm@$pnpm_version" >/dev/null
+        --entrypoint /bin/sh \
+        "$frontend_image" \
+        -ec '
         if [ "$AUDIT_MODE" = gate ]; then
             # Block high and critical runtime findings, plus critical findings
             # anywhere in the dependency graph. High development-only findings

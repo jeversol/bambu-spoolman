@@ -55,4 +55,5 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: false
           exit-code: "1"
+          # renovate: datasource=github-releases depName=aquasecurity/trivy
           version: v0.76.1
