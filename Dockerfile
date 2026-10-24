@@ -134,14 +134,16 @@ COPY --chmod=755 scripts/container-entrypoint.sh /app/container-entrypoint.sh
 
 ENTRYPOINT ["/app/container-init.sh"]
 
-# Make the CI image depend on both verifier stages without copying their marker
-# files into the resulting application image. BuildKit can run the backend and
-# frontend verification branches in parallel with independent app-only work.
-FROM app AS verified_app
+# CI tests and scans this image independently of backend/frontend verification.
+FROM app AS runtime_checked_app
+
+RUN --mount=from=runtime_verifier,source=/tmp/runtime-verified,target=/tmp/runtime-verified,ro \
+    test -f /tmp/runtime-verified
+
+# Local verification and publishing still require every verifier stage.
+FROM runtime_checked_app AS verified_app
 
 RUN --mount=from=backend_verifier,source=/tmp/backend-verified,target=/tmp/backend-verified,ro \
     --mount=from=frontend_verifier,source=/tmp/frontend-verified,target=/tmp/frontend-verified,ro \
-    --mount=from=runtime_verifier,source=/tmp/runtime-verified,target=/tmp/runtime-verified,ro \
     test -f /tmp/backend-verified \
-    && test -f /tmp/frontend-verified \
-    && test -f /tmp/runtime-verified
+    && test -f /tmp/frontend-verified

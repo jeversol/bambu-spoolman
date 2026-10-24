@@ -39,6 +39,42 @@ For a version change, run `docker build --target verified_app .`,
 The container logs `event=container_runtime` with its actual Node and Python
 versions at startup; the image scan checks installed OS and library packages.
 
+## CI checks and vulnerability remediation
+
+The required `verify` result aggregates backend tests, frontend checks, the
+candidate image build, smoke testing, image security, dependency reporting,
+and dependency review. Tests run even when an independent audit fails. A
+failed, cancelled, missing, or unexpectedly skipped required job fails `verify`.
+
+PR dependency review blocks new high/critical dependency findings in every
+scope. The image gate rescans the exact base and candidate using the same
+database snapshot and blocks new high/critical findings. Existing unchanged
+findings remain visible, allowing incremental repairs to merge. A changed
+affected package version or location is new risk. Baseline acquisition or scan
+failures block the comparison; rerun after restoring the baseline or scanner,
+rather than skipping it. Scan JSON reports remain available as workflow artifacts.
+
+The baseline normally comes from the published `sha-<base commit>` image with
+its revision label verified. If publication was unavailable, CI builds the exact
+base's `app` target without relying on its old test gates.
+
+Full dependency audits are diagnostic on PRs. Their failure can mean an advisory
+or an audit/tool/network error; inspect the audit logs and summary. Publishing
+and manual verification still enforce absolute vulnerability thresholds, so a
+merged repair may leave publication blocked until the remaining findings are fixed.
+
+To run the independent correctness checks locally:
+
+```sh
+docker build --target backend_verifier .
+docker build --target frontend_verifier .
+docker build --target runtime_checked_app --tag bambu-spoolman:local .
+sh scripts/container-smoke-test.sh bambu-spoolman:local
+```
+
+`docker build --target verified_app .` still requires all verification stages
+and remains suitable for checking a complete change before publishing.
+
 ## Git workflow cheat sheet
 
 Create a branch for every change so GitHub can run the required checks before
