@@ -12,51 +12,198 @@ permissions:
   contents: read
 
 jobs:
-  verify:
+  backend:
     runs-on: ubuntu-latest
-
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - name: Audit locked dependencies
-        run: sh scripts/security-audit.sh gate
-      - name: Build and verify tested image
+      - name: Backend tests and linters
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          target: verified_app
-          load: true
+          target: backend_verifier
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Frontend build, type checks, and lint
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: frontend_verifier
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+  build-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build production candidate and verify runtime ownership
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: runtime_checked_app
+          platforms: linux/amd64
           tags: bambu-spoolman:ci
+          outputs: type=docker,dest=${{ runner.temp }}/candidate.tar
           build-args: |
             BAMBU_SPOOLMAN_VERSION=ci
             BAMBU_SPOOLMAN_BUILD_NUMBER=${{ github.run_number }}.${{ github.run_attempt }}
             BAMBU_SPOOLMAN_REVISION=${{ github.sha }}
             BAMBU_SPOOLMAN_BUILD_DATE=ci
-          cache-from: type=gha
-          # Re-run apk in the runtime stage so unpinned Alpine packages pick up
-          # security fixes instead of reusing a stale cached layer.
+          cache-from: type=gha,scope=image
           no-cache-filters: runtime_base
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,scope=image
+      - name: Share candidate with smoke test and image scan
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: production-candidate
+          path: ${{ runner.temp }}/candidate.tar
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+
+  smoke-test:
+    needs: build-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download production candidate
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: production-candidate
+          path: ${{ runner.temp }}/candidate
       - name: Smoke-test production container
-        run: sh scripts/container-smoke-test.sh bambu-spoolman:ci
-      - name: Scan image for known vulnerabilities
+        run: |
+          docker load --input "$RUNNER_TEMP/candidate/candidate.tar"
+          sh scripts/container-smoke-test.sh bambu-spoolman:ci
+
+  image-security:
+    needs: build-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download production candidate
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: production-candidate
+          path: ${{ runner.temp }}/candidate
+      - name: Checkout exact PR base for baseline fallback
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: baseline-source
+          persist-credentials: false
+      - name: Obtain baseline image
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: sh scripts/prepare-baseline-image.sh "$BASE_SHA" baseline-source "$GITHUB_REPOSITORY"
+      - name: Prepare scan reports
+        run: mkdir -p "$RUNNER_TEMP/security-reports"
+      - name: Scan baseline with current vulnerability database
+        if: github.event_name == 'pull_request'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: bambu-spoolman:ci
+          image-ref: bambu-spoolman:baseline
           scanners: vuln
           vuln-type: os,library
           severity: HIGH,CRITICAL
           ignore-unfixed: false
-          exit-code: "1"
+          list-all-pkgs: true
+          exit-code: "0"
+          format: json
+          output: ${{ runner.temp }}/security-reports/baseline.json
+          cache: false
           # renovate: datasource=github-releases depName=aquasecurity/trivy
           version: v0.76.1
+      - name: Scan candidate using the same database snapshot
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_SKIP_DB_UPDATE: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
+        with:
+          input: ${{ runner.temp }}/candidate/candidate.tar
+          scanners: vuln
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          list-all-pkgs: true
+          exit-code: "0"
+          format: json
+          output: ${{ runner.temp }}/security-reports/candidate.json
+          cache: false
+          # renovate: datasource=github-releases depName=aquasecurity/trivy
+          version: v0.76.1
+      - name: Enforce image vulnerability policy
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          args=()
+          if [ "$EVENT_NAME" = pull_request ]; then
+            args+=(--baseline "$RUNNER_TEMP/security-reports/baseline.json")
+          fi
+          python3 scripts/compare_image_vulnerabilities.py \
+            "$RUNNER_TEMP/security-reports/candidate.json" "${args[@]}" \
+            --summary "$GITHUB_STEP_SUMMARY"
+      - name: Retain vulnerability reports even when the gate fails
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: image-security-reports
+          path: ${{ runner.temp }}/security-reports/*.json
+          retention-days: 14
+          if-no-files-found: warn
+
+  dependency-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Enforce absolute dependency thresholds on manual verification
+        if: github.event_name == 'workflow_dispatch'
+        run: sh scripts/security-audit.sh gate
+      - name: Report complete locked dependency findings
+        id: report
+        continue-on-error: true
+        run: sh scripts/security-audit.sh report
+      - name: Summarize audit result
+        if: steps.report.outcome == 'failure'
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## Dependency audit needs attention
+
+          The audit found vulnerabilities or could not finish. Inspect its logs
+          and Dependabot alerts. This diagnostic report does not exempt findings:
+          dependency-review blocks new high/critical dependency risk, image-security
+          blocks new high/critical image findings, and publishing retains absolute gates.
+          EOF
 
   dependency-review:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -65,3 +212,17 @@ jobs:
         with:
           fail-on-severity: high
           fail-on-scopes: runtime, development, unknown
+
+  verify:
+    if: always()
+    needs: [backend, frontend, build-image, smoke-test, image-security, dependency-audit, dependency-review]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Require every applicable check to succeed
+        env:
+          CHECK_RESULTS: ${{ toJSON(needs) }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: python3 scripts/check_ci_results.py
