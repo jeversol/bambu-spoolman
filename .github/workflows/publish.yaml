@@ -67,6 +67,9 @@ jobs:
             BAMBU_SPOOLMAN_BUILD_DATE=${{ steps.build_info.outputs.created }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
+          # Re-run apk in the runtime stage so unpinned Alpine packages pick up
+          # security fixes instead of reusing a stale cached layer.
+          no-cache-filters: runtime_base
           cache-to: type=gha,mode=max
           sbom: true
           provenance: mode=max

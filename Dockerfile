@@ -12,7 +12,7 @@ FROM python_base AS runtime_base
 
 RUN apk add --no-cache \
         'libuuid>=2.42.3-r0' \
-        nodejs \
+        'nodejs>=24.22.1-r0' \
         su-exec \
     && addgroup -S -g 10001 bambu-spoolman \
     && adduser -S -D -H -u 10001 -G bambu-spoolman bambu-spoolman \
