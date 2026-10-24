@@ -2,6 +2,8 @@
 # (.github/renovate.json5) controls when new versions are adopted.
 minimumReleaseAge: 0
 
+engineStrict: true
+
 pmOnFail: ignore
 
 allowBuilds:

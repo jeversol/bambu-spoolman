@@ -42,15 +42,6 @@
       depNameTemplate: 'pip-audit',
       datasourceTemplate: 'pypi',
     },
-    {
-      customType: 'regex',
-      managerFilePatterns: ['/^scripts/security-audit\\.sh$/'],
-      matchStrings: [
-        'node:(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)',
-      ],
-      depNameTemplate: 'node',
-      datasourceTemplate: 'docker',
-    },
   ],
   // Renovate checks release age and CI before merging; GitHub rules still apply.
   automergeType: 'pr',
@@ -74,7 +65,7 @@
       matchManagers: ['dockerfile'],
       matchFileNames: ['Dockerfile'],
       matchPackageNames: ['python'],
-      allowedVersions: '/^3\\.14-alpine$/',
+      allowedVersions: '/^3\\.14-alpine3\\.24$/',
     },
     {
       description: 'Keep the Python project requirement on the supported minor',
@@ -97,10 +88,26 @@
       automerge: true,
     },
     {
-      description: 'Keep Node containers on the supported LTS major',
-      matchDatasources: ['docker'],
-      matchPackageNames: ['node'],
-      allowedVersions: '/^24-alpine$/',
+      description: 'Look up Alpine packages in the production base release',
+      matchManagers: ['dockerfile'],
+      matchFileNames: ['Dockerfile'],
+      matchDatasources: ['apk'],
+      registryUrls: [
+        'https://dl-cdn.alpinelinux.org/alpine?branch=v3.24&components=main,community&arch=x86_64',
+      ],
+      groupName: 'alpine packages',
+    },
+    {
+      description: 'Keep the shared Node runtime on the supported LTS major',
+      matchDatasources: ['apk'],
+      matchPackageNames: ['nodejs'],
+      allowedVersions: '/^24\\./',
+    },
+    {
+      description: 'Keep Node types aligned with the supported runtime major',
+      matchManagers: ['npm'],
+      matchPackageNames: ['@types/node'],
+      allowedVersions: '<25',
     },
     {
       description: 'Ship critical security fixes without the release-age wait',
@@ -124,6 +131,7 @@
     {
       description: 'Group minor and patch Docker updates',
       matchManagers: ['dockerfile', 'docker-compose'],
+      matchDatasources: ['docker'],
       matchUpdateTypes: ['minor', 'patch'],
       groupName: 'docker minor and patch dependencies',
     },

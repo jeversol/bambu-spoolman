@@ -1,6 +1,6 @@
 FROM ghcr.io/astral-sh/uv:0.12.10@sha256:2bb3ebca0a796a155094a27773d290c4b074572e6107f171d88d086682fd2500 AS uv
 
-FROM python:3.14-alpine@sha256:601e99e090cb08c2784a42395487709500bc39930307fe72f3f11a8f3c430762 AS python_base
+FROM python:3.14-alpine3.24@sha256:601e99e090cb08c2784a42395487709500bc39930307fe72f3f11a8f3c430762 AS python_base
 
 WORKDIR /app
 
@@ -12,8 +12,8 @@ FROM python_base AS runtime_base
 
 RUN apk add --no-cache \
         'libuuid>=2.42.3-r0' \
-        'nodejs>=24.22.1-r0' \
-        su-exec \
+        nodejs=24.22.1-r0 \
+        su-exec=0.3-r0 \
     && addgroup -S -g 10001 bambu-spoolman \
     && adduser -S -D -H -u 10001 -G bambu-spoolman bambu-spoolman \
     && mkdir -p /config \
@@ -70,17 +70,21 @@ RUN .venv/bin/python -m unittest discover -s tests \
     && touch /tmp/backend-verified
 
 
-FROM node:24-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS frontend_builder
+# Build, audit, and production use the same Node package and Alpine release.
+FROM runtime_base AS frontend_toolchain
 
-RUN apk add --no-cache protobuf protobuf-dev
+RUN apk add --no-cache npm=11.12.1-r0
 
-WORKDIR /app
+COPY frontend/package.json /app/frontend/package.json
+RUN pnpm_version=$(node -p "require('/app/frontend/package.json').packageManager.split('@')[1]") \
+    && npm install --global "pnpm@$pnpm_version"
+
+FROM frontend_toolchain AS frontend_builder
+
+RUN apk add --no-cache protobuf=31.1-r1 protobuf-dev=31.1-r1
 
 COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml /app/frontend/
-RUN pnpm_version=$(node -p "require('/app/frontend/package.json').packageManager.split('@')[1]") \
-    && npm install --global "pnpm@$pnpm_version" \
-    && cd /app/frontend \
-    && pnpm install --frozen-lockfile
+RUN cd /app/frontend && pnpm install --frozen-lockfile
 
 COPY frontend /app/frontend
 COPY proto /app/proto

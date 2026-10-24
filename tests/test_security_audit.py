@@ -17,7 +17,8 @@ with open(os.environ['AUDIT_TEST_LOG'], 'a') as log:
     log.write(json.dumps([name, *args]) + '\\n')
 if name == 'docker':
     if args[0] == 'build':
-        sys.exit(int(os.environ.get('BUILD_STATUS', '0')))
+        key = 'BUILD_STATUS' if 'builder' in args else 'FRONTEND_BUILD_STATUS'
+        sys.exit(int(os.environ.get(key, '0')))
     mode = next(a.split('=', 1)[1] for a in args if a.startswith('AUDIT_MODE='))
     script = args[-1].replace('cd /app', 'cd ' + os.environ['AUDIT_TEST_ROOT'])
     env = {**os.environ, 'AUDIT_MODE': mode}
@@ -73,9 +74,10 @@ class SecurityAuditTests(unittest.TestCase):
                 ["pnpm", "audit", "--audit-level", "critical"],
             ],
         )
-        self.assertFalse(
-            any(c[0] in ("uv", "uvx") or c[:2] == ["docker", "build"] for c in commands)
-        )
+        self.assertFalse(any(c[0] in ("uv", "uvx") for c in commands))
+        builds = [c for c in commands if c[:2] == ["docker", "build"]]
+        self.assertEqual(len(builds), 1)
+        self.assertIn("frontend_toolchain", builds[0])
 
     def test_runtime_high_findings_fail_gate(self):
         status, _ = self.run_audit(PROD_STATUS=1)
@@ -102,6 +104,12 @@ class SecurityAuditTests(unittest.TestCase):
         self.assertNotEqual(status, 0)
         self.assertFalse(any(c[0] == "uvx" for c in commands))
         self.assertTrue(any(c[0] == "pnpm" for c in commands))
+
+    def test_failed_frontend_build_does_not_audit_stale_image(self):
+        status, commands = self.run_audit(FRONTEND_BUILD_STATUS=1)
+        self.assertNotEqual(status, 0)
+        self.assertFalse(any(c[:2] == ["docker", "run"] for c in commands))
+        self.assertFalse(any(c[0] == "pnpm" for c in commands))
 
     def test_invalid_mode_does_not_run_docker(self):
         status, commands = self.run_audit("invalid")
