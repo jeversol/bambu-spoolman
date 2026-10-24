@@ -4,7 +4,9 @@
   timezone: 'America/New_York',
   prConcurrentLimit: 5,
   dependencyDashboard: true,
-  rebaseWhen: 'behind-base-branch',
+  // main doesn't require PRs to be up to date (publish re-verifies main), so
+  // only rebase when a branch actually conflicts.
+  rebaseWhen: 'conflicted',
   prCreation: 'immediate',
   // Release age is enforced here only (pnpm's check is disabled), and Renovate
   // waits it out before creating a branch.
