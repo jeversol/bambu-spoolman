@@ -8,13 +8,16 @@ async function forward(request: Request, context: Context) {
   const path = (await context.params).path.join("/");
   const allowed =
     request.method === "GET"
-      ? /^(settings|spools(?:\/\d+)?)$/.test(path)
-      : request.method === "PUT" && /^trays\/\d+$/.test(path);
+      ? /^(settings|printer|info|spools(?:\/\d+)?)$/.test(path)
+      : request.method === "PUT"
+        ? /^(trays\/\d+|spools\/\d+\/rfid)$/.test(path)
+        : request.method === "POST" &&
+          /^trays\/\d+\/rfid\/(override|unlink)$/.test(path);
   if (!allowed)
     return Response.json({ error: "Not found" }, { status: 404, headers });
 
   let body: string | undefined;
-  if (request.method === "PUT") {
+  if (request.method !== "GET") {
     const origin = request.headers.get("origin");
     if (origin) {
       try {
@@ -69,10 +72,6 @@ async function forward(request: Request, context: Context) {
       redirect: "error",
       signal: AbortSignal.timeout(120_000),
     });
-    if (request.method === "PUT" && response.ok) {
-      revalidateTag("settings", { expire: 0 });
-      revalidateTag("all-spools", { expire: 0 });
-    }
     return new Response(response.body, {
       status: response.status,
       headers: { ...headers, "Content-Type": "application/json" },
@@ -82,8 +81,17 @@ async function forward(request: Request, context: Context) {
       { error: "Backend is unavailable" },
       { status: 502, headers },
     );
+  } finally {
+    // Even a failed mutation can have applied one part of a remote operation.
+    if (request.method !== "GET") {
+      revalidateTag("settings", { expire: 0 });
+      revalidateTag("all-spools", { expire: 0 });
+      revalidateTag("printer", { expire: 0 });
+      revalidateTag("spools", { expire: 0 });
+    }
   }
 }
 
 export const GET = forward;
 export const PUT = forward;
+export const POST = forward;

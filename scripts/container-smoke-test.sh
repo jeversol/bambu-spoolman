@@ -31,6 +31,7 @@ container_id=$(docker run --detach \
     --tmpfs /tmp:uid=10001,gid=10001,mode=1777 \
     --tmpfs /app/frontend/.next/cache:uid=10001,gid=10001,mode=0700 \
     --volume "$volume:/config" \
+    --env GRPC_SERVER_URL=http://127.0.0.1:1 \
     --env PRINTER_IP=127.0.0.1 \
     --env PRINTER_SERIAL=container-smoke-test \
     --env PRINTER_ACCESS_CODE=unused \

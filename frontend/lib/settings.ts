@@ -1,4 +1,4 @@
-import { cacheLife, cacheTag, revalidateTag } from "next/cache";
+import { cacheLife, cacheTag } from "next/cache";
 import { backendRequest } from "./server/api";
 import { getSpool } from "./spool";
 
@@ -7,11 +7,6 @@ export type Settings = {
   trayCount: number;
   lockedTrays: number[];
 };
-
-export async function revalidateSettings() {
-  "use server";
-  revalidateTag("settings", "max");
-}
 
 export async function getSettings() {
   "use cache";

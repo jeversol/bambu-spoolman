@@ -85,8 +85,7 @@ and [configuration options](https://docs.renovatebot.com/configuration-options/)
 
 ## Application consolidation: assignment flow
 
-The first migration slice moves spool assignment from internal gRPC calls to a
-Python HTTP API. React components and both assignment dialogs remain in place.
+Spool assignment uses the Python HTTP API. React components and both assignment dialogs remain in place.
 The dashboard, external-holder page, and individual tray pages read settings and
 inventory through HTTP; assigning and clearing use browser JSON requests.
 Successful mutations invalidate the settings cache immediately before refreshing
@@ -121,12 +120,46 @@ outages, followed by the existing restricted-runtime/restart checks. Backend
 contract tests and frontend HTTP-client tests run in their respective verifier
 stages. These checks do not drive a browser's buttons or a physical printer.
 
-This is the first slice of the architecture plan. Printer status, RFID operations,
-and their generated UI types still use the transitional gRPC/Next setup. Migrate
-those after assignment parity, then serve static React assets from Python and
-remove production Node, gRPC, protobuf generation, and dual-process supervision.
+The remaining architecture work is serving static React assets from Python and
+removing production Node, gRPC, protobuf generation, and dual-process supervision.
 The existing best-effort Spoolman location-field synchronization is unchanged;
 explicit partial-failure reporting belongs to the subsequent backend work.
+
+## Printer and RFID HTTP API
+
+All UI calls use HTTP. Printer snapshots and Spoolman feature detection use `/api/v1/printer` and `/api/v1/info`. Linking,
+temporary override, and permanent unlinking use browser JSON requests through
+the same proxy and limits as assignment.
+
+| Method | Browser path | Body |
+| --- | --- | --- |
+| GET | `/api/v1/printer` | None; connection, last update, raw printer snapshot |
+| GET | `/api/v1/info` | None; Spoolman health and feature support |
+| PUT | `/api/v1/spools/<id>/rfid` | `{ "uuid": "<tag>" }` links a nonempty tag |
+| POST | `/api/v1/trays/<id>/rfid/override` | `{ "uuid": "<current tag>" }` pauses automatic mapping |
+| POST | `/api/v1/trays/<id>/rfid/unlink` | `{ "spoolId": 42, "uuid": "<current tag>" }` permanently unlinks |
+
+`bambu_spoolman/rfid.py` owns RFID rules for HTTP and the transitional gRPC
+adapter. Permanent unlink is one server-coordinated operation: check the expected
+assignment, suppress relinking for this insertion, then remove the association.
+A stale assignment returns 409; a missing/currently changed tag is rejected. If
+only part succeeds, the response describes that partial result and retains the
+local override to prevent immediate automatic recreation. Writes are not retried
+automatically. Settings, spool, and printer caches are invalidated even on failed
+mutations because one part may already have applied.
+
+Upstream feature lookups and RFID synchronization run outside the event loop so
+status polling remains responsive. The automatic switch uses one reentrant lock
+for MQTT synchronization, manual refresh, and override of its shared state.
+This does not provide a transaction across local settings and Spoolman; broader
+mapping concurrency and lifecycle work remains in the backend-refactor stage.
+
+The frontend no longer has a gRPC client or transport dependencies. TypeScript
+protobuf generation emits data models only during this transition. The old
+backend adapter and generated UI presentation types remain until static React
+assets can be served directly by Python, at which point Node, gRPC, and protobuf
+build steps can be removed together. The container smoke test deliberately points
+the old frontend gRPC URL at an unavailable address to verify HTTP independence.
 
 ## CI checks and vulnerability remediation
 
