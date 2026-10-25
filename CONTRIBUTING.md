@@ -162,6 +162,27 @@ The existing checkpoint format and timeout reconciliation behavior are retained;
 external concurrent changes to spool totals remain a reconciliation limitation
 for a later change.
 
+## Tracker shutdown and retry ownership
+
+`FilamentUsageTracker.stop()` rejects new messages/segments and cancels a pending
+retry immediately. Retry callbacks carry an identifier, checked under the tracker
+lock, so canceled callbacks already waiting for that lock cannot detach a newer
+retry or apply work to a replacement print.
+
+`close(timeout=30)` also waits for active tracker work and joins the current timer
+without holding the tracker lock. It returns whether that work finished within
+the budget. Shutdown retains checkpoint state and pending consumption intents;
+it does not clear them or force a retry. An in-flight segment finishes its normal
+checkpoint update before stopping, and a timed-out consumption keeps its intent
+on disk for restart reconciliation. Subsequent segments are not started.
+
+The daemon stops MQTT and the tracker before HTTP cleanup, then closes the tracker
+in a worker thread. Normal completion logs `event=tracker_shutdown_complete`;
+uncompleted work logs `event=tracker_shutdown_pending_background_work`. Existing
+network/model timeouts still bound synchronous operations, and Compose's 45-second
+grace remains the final process deadline. This does not forcibly cancel an
+already-running synchronous request or drain every other MQTT callback.
+
 ## Model loading and resource limits
 
 `broker/model_loader.py` owns model URL routing, streamed HTTP downloads and

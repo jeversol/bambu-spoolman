@@ -67,6 +67,7 @@ stop_gracefully() {
         exit 1
     fi
     docker logs "$container_id" 2>&1 | grep -q 'event=container_shutdown_complete'
+    docker logs "$container_id" 2>&1 | grep -q 'event=tracker_shutdown_complete'
 }
 
 docker build --file "$repository_root/.github/docker/Dockerfile.browser" --tag bambu-spoolman:browser-smoke "$repository_root"

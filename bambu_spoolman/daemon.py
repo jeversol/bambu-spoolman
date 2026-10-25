@@ -75,9 +75,14 @@ async def async_main():
     finally:
         logger.info("event=container_shutdown_started")
         mqtt.stop()
+        usage_tracker.stop()
         server.cancel()
         stopped.cancel()
         await asyncio.gather(server, stopped, return_exceptions=True)
+        if not await asyncio.to_thread(usage_tracker.close, timeout=30):
+            logger.warning("event=tracker_shutdown_pending_background_work")
+        else:
+            logger.info("event=tracker_shutdown_complete")
         await asyncio.to_thread(mqtt.join, 6)
         await asyncio.to_thread(mqtt.message_dispatcher.join, 1)
         if mqtt.is_alive() or mqtt.message_dispatcher.is_alive():
