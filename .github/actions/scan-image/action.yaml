@@ -1,0 +1,50 @@
+name: Scan image to JSON
+description: Collect complete image vulnerability evidence using the shared scanner policy
+inputs:
+  image-ref:
+    description: Immutable image reference to scan (exclusive with input)
+    default: ""
+  input:
+    description: Saved Docker image tar to scan (exclusive with image-ref)
+    default: ""
+  output:
+    description: Destination JSON report path
+    required: true
+  skip-db-update:
+    description: Reuse the database snapshot established by an earlier scan
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Validate scan inputs
+      shell: bash
+      env:
+        IMAGE_REF: ${{ inputs.image-ref }}
+        IMAGE_INPUT: ${{ inputs.input }}
+        REPORT_PATH: ${{ inputs.output }}
+      run: |
+        if { [ -z "$IMAGE_REF" ] && [ -z "$IMAGE_INPUT" ]; } ||
+           { [ -n "$IMAGE_REF" ] && [ -n "$IMAGE_INPUT" ]; }; then
+          echo 'Provide exactly one image reference or image tar' >&2
+          exit 1
+        fi
+        test -n "$REPORT_PATH"
+        mkdir -p "$(dirname "$REPORT_PATH")"
+    - name: Collect vulnerabilities and package inventories
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      env:
+        TRIVY_SKIP_DB_UPDATE: ${{ inputs.skip-db-update }}
+      with:
+        image-ref: ${{ inputs.image-ref }}
+        input: ${{ inputs.input }}
+        scanners: vuln
+        vuln-type: os,library
+        severity: HIGH,CRITICAL
+        ignore-unfixed: false
+        list-all-pkgs: true
+        exit-code: "0"
+        format: json
+        output: ${{ inputs.output }}
+        cache: false
+        # renovate: datasource=github-releases depName=aquasecurity/trivy
+        version: v0.76.1

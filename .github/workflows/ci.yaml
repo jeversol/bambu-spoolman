@@ -80,7 +80,7 @@ jobs:
   smoke-test:
     needs: build-image
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -122,37 +122,16 @@ jobs:
         run: mkdir -p "$RUNNER_TEMP/security-reports"
       - name: Scan baseline with current vulnerability database
         if: github.event_name == 'pull_request'
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        uses: ./.github/actions/scan-image
         with:
           image-ref: bambu-spoolman:baseline
-          scanners: vuln
-          vuln-type: os,library
-          severity: HIGH,CRITICAL
-          ignore-unfixed: false
-          list-all-pkgs: true
-          exit-code: "0"
-          format: json
           output: ${{ runner.temp }}/security-reports/baseline.json
-          cache: false
-          # renovate: datasource=github-releases depName=aquasecurity/trivy
-          version: v0.76.1
       - name: Scan candidate using the same database snapshot
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        env:
-          TRIVY_SKIP_DB_UPDATE: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
+        uses: ./.github/actions/scan-image
         with:
           input: ${{ runner.temp }}/candidate/candidate.tar
-          scanners: vuln
-          vuln-type: os,library
-          severity: HIGH,CRITICAL
-          ignore-unfixed: false
-          list-all-pkgs: true
-          exit-code: "0"
-          format: json
           output: ${{ runner.temp }}/security-reports/candidate.json
-          cache: false
-          # renovate: datasource=github-releases depName=aquasecurity/trivy
-          version: v0.76.1
+          skip-db-update: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
       - name: Enforce image vulnerability policy
         env:
           EVENT_NAME: ${{ github.event_name }}

@@ -2,97 +2,137 @@ name: Publish Docker image
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+permissions:
+  contents: read
 
 concurrency:
   group: publish-main
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  build-and-push:
+  dependency-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Audit locked dependencies
+        run: sh scripts/security-audit.sh gate
+
+  candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
-
-    runs-on: ubuntu-latest
-
+    outputs:
+      image: ${{ steps.info.outputs.image }}
+      digest: ${{ steps.build.outputs.digest }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - name: Audit locked dependencies
-        run: sh scripts/security-audit.sh gate
-      - name: Run tests and linters
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          target: verify
-          cache-from: type=gha
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Generate build information
-        id: build_info
-        run: echo "created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
-      - name: Extract metadata
+        id: info
+        run: |
+          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+      - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=latest
-            type=sha,prefix=sha-,format=long
-      - name: Log in
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+          images: ${{ steps.info.outputs.image }}
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build release candidate
-        id: candidate
+      - name: Build one fully verified release candidate
+        id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
+          target: verified_app
           platforms: linux/amd64
-          # Upload the content-addressed manifest without exposing an unverified
-          # candidate tag. Release tags are created only after both gates pass.
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=${{ steps.info.outputs.image }},push-by-digest=true,name-canonical=true,push=true
           build-args: |
             BAMBU_SPOOLMAN_VERSION=${{ github.ref_name }}
             BAMBU_SPOOLMAN_BUILD_NUMBER=${{ github.run_number }}.${{ github.run_attempt }}
             BAMBU_SPOOLMAN_REVISION=${{ github.sha }}
-            BAMBU_SPOOLMAN_BUILD_DATE=${{ steps.build_info.outputs.created }}
+            BAMBU_SPOOLMAN_BUILD_DATE=${{ steps.info.outputs.created }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
-          # Re-run apk in the runtime stage so unpinned Alpine packages pick up
-          # security fixes instead of reusing a stale cached layer.
           no-cache-filters: runtime_base
           cache-to: type=gha,mode=max
           sbom: true
           provenance: mode=max
-      - name: Smoke-test production container
-        run: sh scripts/container-smoke-test.sh "${REGISTRY}/${IMAGE_NAME}@${{ steps.candidate.outputs.digest }}"
-      - name: Scan image for known vulnerabilities
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+
+  smoke-test:
+    needs: candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
+    env:
+      SOURCE_IMAGE: ${{ needs.candidate.outputs.image }}@${{ needs.candidate.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.candidate.outputs.digest }}
-          scanners: vuln
-          vuln-type: os,library
-          severity: HIGH,CRITICAL
-          ignore-unfixed: false
-          exit-code: "1"
-          # renovate: datasource=github-releases depName=aquasecurity/trivy
-          version: v0.76.1
-      - name: Publish verified image
-        env:
-          RELEASE_TAGS: ${{ steps.meta.outputs.tags }}
-          SOURCE_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.candidate.outputs.digest }}
-        run: |
-          printf '%s\n' "$RELEASE_TAGS" | while IFS= read -r tag; do
-            if [ -n "$tag" ]; then
-              docker buildx imagetools create --tag "$tag" "$SOURCE_IMAGE"
-            fi
-          done
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - run: sh scripts/container-smoke-test.sh "$SOURCE_IMAGE"
+
+  image-security:
+    needs: candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    env:
+      SOURCE_IMAGE: ${{ needs.candidate.outputs.image }}@${{ needs.candidate.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./.github/actions/scan-image
+        with:
+          image-ref: ${{ env.SOURCE_IMAGE }}
+          output: ${{ runner.temp }}/security-reports/image.json
+      - name: Enforce production vulnerability policy
+        run: python3 scripts/compare_image_vulnerabilities.py "$RUNNER_TEMP/security-reports/image.json" --summary "$GITHUB_STEP_SUMMARY"
+      - name: Retain scan evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: image-security-report
+          path: ${{ runner.temp }}/security-reports/*.json
+          retention-days: 14
+          if-no-files-found: warn
+
+  publish:
+    needs: [candidate, dependency-gate, smoke-test, image-security]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    env:
+      SOURCE_IMAGE: ${{ needs.candidate.outputs.image }}@${{ needs.candidate.outputs.digest }}
+      CHECK_RESULTS: ${{ toJSON(needs) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Promote the tested digest; update latest last
+        run: python3 -m scripts.promote_image "$SOURCE_IMAGE" "$GITHUB_SHA"

@@ -17,19 +17,22 @@ REQUIRED_JOBS = frozenset(
 )
 
 
+def require_jobs(results, expected_results):
+    if not isinstance(results, dict) or set(results) != set(expected_results):
+        raise ValueError("Missing or unexpected CI job results")
+    for name, job in results.items():
+        expected = expected_results[name]
+        if not isinstance(job, dict) or job.get("result") != expected:
+            raise ValueError(f"{name} must be {expected}: {job!r}")
+
+
 def check_results(results, event):
     if event not in {"pull_request", "workflow_dispatch"}:
         raise ValueError(f"Unsupported CI event: {event}")
-    if not isinstance(results, dict) or set(results) != REQUIRED_JOBS:
-        raise ValueError("Missing or unexpected CI job results")
-    for name, job in results.items():
-        expected = (
-            "skipped"
-            if name == "dependency-review" and event == "workflow_dispatch"
-            else "success"
-        )
-        if not isinstance(job, dict) or job.get("result") != expected:
-            raise ValueError(f"{name} must be {expected}: {job!r}")
+    expected = {name: "success" for name in REQUIRED_JOBS}
+    if event == "workflow_dispatch":
+        expected["dependency-review"] = "skipped"
+    require_jobs(results, expected)
 
 
 def main():

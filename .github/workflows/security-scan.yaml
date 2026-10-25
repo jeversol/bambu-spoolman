@@ -14,46 +14,75 @@ permissions:
   packages: read
 
 jobs:
-  scan:
+  deployment:
     runs-on: ubuntu-latest
-
+    timeout-minutes: 10
+    outputs:
+      image: ${{ steps.resolve.outputs.image }}
+      revision: ${{ steps.resolve.outputs.revision }}
     steps:
-      - name: Checkout deployed branch
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: main
-      - name: Audit deployed lockfiles
-        run: sh scripts/security-audit.sh gate
-      - name: Report dependency vulnerabilities
-        id: dependency_audit
-        continue-on-error: true
-        run: sh scripts/security-audit.sh report
-      - name: Summarize dependency findings
-        if: steps.dependency_audit.outcome == 'failure'
-        run: |
-          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
-          ## Dependency vulnerabilities detected
-
-          The complete dependency audit reported findings or could not finish.
-          This report does not itself block publishing. The blocking checks
-          enforce npm severity thresholds and high/critical findings in the
-          production image.
-          See the preceding audit step and the repository's Dependabot alerts.
-          EOF
-      - name: Log in
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Scan published image for known vulnerabilities
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      - name: Resolve deployed digest and source revision once
+        id: resolve
+        run: python3 -m scripts.resolve_published_image "ghcr.io/${GITHUB_REPOSITORY,,}"
+
+  dependency-gate:
+    needs: deployment
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          image-ref: ghcr.io/${{ github.repository }}:latest
-          scanners: vuln
-          vuln-type: os,library
-          severity: HIGH,CRITICAL
-          ignore-unfixed: false
-          exit-code: "1"
-          # renovate: datasource=github-releases depName=aquasecurity/trivy
-          version: v0.76.1
+          ref: ${{ needs.deployment.outputs.revision }}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - run: sh scripts/security-audit.sh gate
+
+  dependency-report:
+    needs: deployment
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.deployment.outputs.revision }}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Report all dependency findings
+        id: report
+        continue-on-error: true
+        run: sh scripts/security-audit.sh report
+      - name: Summarize report outcome
+        if: steps.report.outcome == 'failure'
+        run: echo 'The complete dependency report found advisories or could not finish. See audit logs; the independent dependency and image gates remain blocking.' >> "$GITHUB_STEP_SUMMARY"
+
+  image-security:
+    needs: deployment
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SOURCE_IMAGE: ${{ needs.deployment.outputs.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./.github/actions/scan-image
+        with:
+          image-ref: ${{ env.SOURCE_IMAGE }}
+          output: ${{ runner.temp }}/security-reports/image.json
+      - name: Enforce production vulnerability policy
+        run: python3 scripts/compare_image_vulnerabilities.py "$RUNNER_TEMP/security-reports/image.json" --summary "$GITHUB_STEP_SUMMARY"
+      - name: Retain scan evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: image-security-report
+          path: ${{ runner.temp }}/security-reports/*.json
+          retention-days: 14
+          if-no-files-found: warn
