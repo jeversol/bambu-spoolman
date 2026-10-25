@@ -17,7 +17,7 @@ Node 24, enforced by `engines.node` and pnpm's `engineStrict` setting.
 | Python wheel build backend | `pyproject.toml` `build-system.requires` | Renovate Python manager |
 | uv | Pinned image references in both Dockerfiles | Renovate Dockerfile manager |
 | pip-audit | Version pin in `scripts/security-audit.sh` | Renovate custom regex manager |
-| Trivy binary | Annotated `version` inputs in security workflows | Renovate GitHub Actions manager, independently of the action version |
+| Trivy binary | Annotated `version` input in `.github/actions/scan-image/action.yaml` | Renovate GitHub Actions manager, independently of the action version |
 | GitHub Actions and pre-commit hooks | SHA/version references in workflows and `.pre-commit-config.yaml` | Renovate built-in managers |
 
 Renovate alone controls minimum release age. Keep pnpm's `minimumReleaseAge`
@@ -74,6 +74,28 @@ sh scripts/container-smoke-test.sh bambu-spoolman:local
 
 `docker build --target verified_app .` still requires all verification stages
 and remains suitable for checking a complete change before publishing.
+
+## Release and deployed-image verification
+
+Publishing builds `verified_app` once, including backend tests and frontend
+checks. The dependency gate runs independently; the smoke test and image scan
+independently consume the resulting immutable digest. Only successful gates
+allow promotion. Promotion preserves that digest, verifies the commit tag first,
+and updates `latest` last. A failed verification gate leaves `latest` unchanged.
+Release runs are serialized without cancelling an in-progress promotion.
+
+The smoke test uses the Compose read-only filesystem, capabilities, temporary
+filesystems, and privilege restrictions. With a disposable configuration volume,
+it checks frontend and backend API readiness, migration of root-owned files,
+settings and checkpoint persistence across restart, and graceful shutdown.
+It requires no live printer or Spoolman instance.
+
+Scheduled scans resolve the published digest and source revision once. Dependency
+gating, complete dependency reporting, and image scanning then run independently;
+the dependency checks use that deployed revision's lockfiles even when `main`
+has advanced. Image scans in CI, publishing, and scheduled checks share one
+scanner configuration. JSON evidence is retained for 14 days, including on gate
+failure; unavailable or malformed evidence fails the image gate.
 
 ## Git workflow cheat sheet
 
