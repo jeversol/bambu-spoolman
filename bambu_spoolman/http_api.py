@@ -170,17 +170,29 @@ async def rfid_unlink(request):
 
 def static_handler(directory):
     root = Path(directory).resolve()
+    # Inventory the trusted build output once. Request strings are only lookup
+    # keys; they never become filesystem paths. Assets are immutable in the
+    # supported read-only container; rebuild/restart to publish a new asset set.
+    assets = {}
+    for file in root.rglob("*"):
+        relative = file.relative_to(root)
+        if any(part.startswith(".") for part in relative.parts):
+            continue
+        if file.is_symlink() or not file.is_file():
+            continue
+        resolved = file.resolve()
+        if resolved.is_relative_to(root):
+            assets[relative.as_posix()] = resolved
+    index = assets.get("index.html")
 
     async def serve_static(request):
         path = request.match_info["path"]
         if path == "api" or path.startswith("api/"):
             raise web.HTTPNotFound()
-        if any(part.startswith(".") for part in Path(path).parts):
-            raise web.HTTPNotFound()
-        candidate = (root / path).resolve()
-        if not candidate.is_relative_to(root):
-            raise web.HTTPNotFound()
-        if candidate.is_file():
+        candidate = assets.get(path)
+        if candidate is not None:
+            if not candidate.is_file():
+                raise web.HTTPNotFound()
             response = web.FileResponse(candidate)
             response.headers["Cache-Control"] = (
                 "public, max-age=31536000, immutable"
@@ -195,10 +207,7 @@ def static_handler(directory):
         )
         if not valid:
             raise web.HTTPNotFound()
-        index = (root / "index.html").resolve()
-        if not index.is_relative_to(root):
-            raise web.HTTPNotFound()
-        if not index.is_file():
+        if index is None or not index.is_file():
             raise web.HTTPServiceUnavailable(reason="Dashboard assets are unavailable")
         return web.FileResponse(index, headers={"Cache-Control": "no-cache"})
 

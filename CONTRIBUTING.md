@@ -91,7 +91,9 @@ and shell process supervision are removed. React Router preserves `/`,
 `/external-spool`, and `/ams/<ams>/tray/<slot>` deep links. Python serves HTML
 with revalidation and hashed assets with immutable caching. Files outside the
 static root, dotfiles, missing assets, and unknown API routes never receive the
-application HTML fallback.
+application HTML fallback. At startup Python inventories the built assets; URLs
+only select entries from that allowlist, never construct filesystem paths.
+Symlinks are excluded. Rebuild/restart to publish a changed asset set.
 
 Vite builds the UI; TypeScript 6 (`tsc6`) and ESLint run before release. For
 separate development processes, run `uv run bambu-spoolman-broker` with the
