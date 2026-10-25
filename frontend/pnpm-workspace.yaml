@@ -7,6 +7,5 @@ engineStrict: true
 pmOnFail: ignore
 
 allowBuilds:
-  protobufjs: false
   sharp: false
   unrs-resolver: false

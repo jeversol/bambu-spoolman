@@ -81,16 +81,13 @@ RUN pnpm_version=$(node -p "require('/app/frontend/package.json').packageManager
 
 FROM frontend_toolchain AS frontend_builder
 
-RUN apk add --no-cache protobuf=31.1-r1 protobuf-dev=31.1-r1
-
 COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml /app/frontend/
 RUN cd /app/frontend && pnpm install --frozen-lockfile
 
 COPY frontend /app/frontend
-COPY proto /app/proto
 
 
-RUN cd /app/frontend && pnpm proto-generate && pnpm build
+RUN cd /app/frontend && pnpm build
 
 FROM frontend_builder AS frontend_verifier
 

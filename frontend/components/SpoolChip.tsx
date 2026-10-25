@@ -1,6 +1,6 @@
 import { cva, type VariantProps } from "class-variance-authority";
 import { getRemainingPercent } from "@/lib/dashboard";
-import type { Spool } from "@/lib/proto/bambu_spoolman/grpc/spoolman";
+import type { Spool } from "@/lib/spool-model";
 import { MultiColorDirection } from "@/lib/types";
 
 const spoolChip = cva(["border", "border-2"], {
