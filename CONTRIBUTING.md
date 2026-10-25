@@ -154,13 +154,45 @@ legacy layer totals and object/line-aware models through the `UsageSource`
 interface. Planning does not modify input models/history or access the network,
 configuration files, checkpoints or retry timers.
 
-`FilamentUsageTracker` remains responsible for MQTT lifecycle, model retrieval
-and parsing, reading tray-to-spool assignments, durable consumption intents,
+`FilamentUsageTracker` coordinates MQTT lifecycle and the model loader,
+reads tray-to-spool assignments, and owns durable consumption intents,
 Spoolman delivery and retries. Refill mapping updates use the same extracted
 position-selection function as consumption, preserving layer/line boundaries.
 The existing checkpoint format and timeout reconciliation behavior are retained;
 external concurrent changes to spool totals remain a reconciliation limitation
 for a later change.
+
+## Model loading and resource limits
+
+`broker/model_loader.py` owns model URL routing, streamed HTTP downloads and
+archive-to-usage parsing. `bambu_ftp.py` retains the printer FTPS transport and
+uses the same download budget. The tracker installs parsed usage and checkpoints;
+it removes acquired temporary files even when parsing or checkpoint creation
+fails. Recovered checkpoint models are parsed through the same archive limits.
+
+Limits reject oversized advertised transfers and count actual bytes, including
+when a server omits or misreports its size. ZIP members are read without extraction.
+Metadata DTDs are rejected; selected metadata/G-code sizes, member count, line
+length and line count are bounded. Violations reject the model rather than
+accounting for partially parsed usage. Limits do not change normal accounting
+or the checkpoint schema.
+
+Override defaults with `BAMBU_SPOOLMAN_MODEL_<SUFFIX>` in the container environment:
+
+| Suffix | Default | Meaning |
+| --- | --- | --- |
+| `DOWNLOAD_BYTES` | 268435456 (256 MiB) | HTTP/FTP download and archive file size |
+| `GCODE_BYTES` | 536870912 (512 MiB) | Uncompressed selected G-code |
+| `METADATA_BYTES` | 2097152 (2 MiB) | Selected XML metadata |
+| `ARCHIVE_ENTRIES` | 4096 | ZIP directory entries |
+| `GCODE_LINES` | 5000000 | Lines processed, including blank lines |
+| `LINE_BYTES` | 65536 | UTF-8 bytes per G-code line |
+| `SECONDS` | 300 | Cooperative budget for each transfer or parse |
+
+Values must be positive and finite. Increase limits deliberately for larger
+prints. Time is checked between chunks/lines; an individual blocking network read
+still uses the existing socket/request timeout. These budgets bound accepted work;
+they do not impose a process-level memory quota or interrupt a blocked system call.
 
 ## CI checks and vulnerability remediation
 

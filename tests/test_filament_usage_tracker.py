@@ -5,8 +5,6 @@ import unittest
 import zipfile
 from unittest.mock import Mock, call, patch
 
-import requests
-
 from bambu_spoolman.broker.filament_accounting import plan_layer_usage
 from bambu_spoolman.broker.filament_usage_tracker import FilamentUsageTracker
 from bambu_spoolman.gcode.parser import evaluate_gcode
@@ -680,56 +678,6 @@ G1 E5
             99, length=7.0
         )
 
-    @patch("bambu_spoolman.broker.filament_usage_tracker.requests.get")
-    def test_model_download_uses_configured_timeout(self, get):
-        get.return_value.iter_content.return_value = [b"model"]
-
-        with patch.dict(os.environ, {"BAMBU_SPOOLMAN_HTTP_TIMEOUT": "12.5"}):
-            model_path = self.tracker._download_model("http://printer/model.3mf")
-
-        self.addCleanup(os.remove, model_path)
-        get.assert_called_once_with(
-            "http://printer/model.3mf", timeout=12.5, stream=True
-        )
-
-    @patch("bambu_spoolman.broker.filament_usage_tracker.requests.get")
-    def test_model_download_writes_streamed_chunks(self, get):
-        get.return_value.iter_content.return_value = [b"first", b"", b"second"]
-
-        model_path = self.tracker._download_model("http://printer/model.3mf")
-
-        self.addCleanup(os.remove, model_path)
-        with open(model_path, "rb") as model_file:
-            self.assertEqual(model_file.read(), b"firstsecond")
-        get.return_value.raise_for_status.assert_called_once_with()
-        get.return_value.iter_content.assert_called_once_with(chunk_size=64 * 1024)
-        get.return_value.close.assert_called_once_with()
-
-    @patch("bambu_spoolman.broker.filament_usage_tracker.requests.get")
-    def test_model_download_removes_partial_file_after_stream_error(self, get):
-        created_files = []
-        real_named_temporary_file = tempfile.NamedTemporaryFile
-
-        def track_temporary_file(*args, **kwargs):
-            temporary_file = real_named_temporary_file(*args, **kwargs)
-            created_files.append(temporary_file.name)
-            return temporary_file
-
-        get.return_value.iter_content.side_effect = (
-            requests.exceptions.ChunkedEncodingError("connection interrupted")
-        )
-
-        with patch(
-            "bambu_spoolman.broker.filament_usage_tracker.tempfile.NamedTemporaryFile",
-            side_effect=track_temporary_file,
-        ):
-            model_path = self.tracker._download_model("http://printer/model.3mf")
-
-        self.assertIsNone(model_path)
-        self.assertEqual(len(created_files), 1)
-        self.assertFalse(os.path.exists(created_files[0]))
-        get.return_value.close.assert_called_once_with()
-
     def test_load_model_rejects_invalid_utf8_gcode(self):
         archive_file = tempfile.NamedTemporaryFile(suffix=".3mf", delete=False)
         archive_file.close()
@@ -754,6 +702,16 @@ G1 E5
         self.assertFalse(loaded)
         self.assertIsNone(self.tracker.active_model)
 
+    def test_budget_rejection_does_not_install_partial_usage(self):
+        file = tempfile.NamedTemporaryFile(suffix=".3mf", delete=False)
+        file.close()
+        self.addCleanup(os.remove, file.name)
+        with zipfile.ZipFile(file.name, "w") as archive:
+            archive.writestr("plate.gcode", "M620 S0\nM83\nG1 E10\n")
+        with patch.dict(os.environ, {"BAMBU_SPOOLMAN_MODEL_GCODE_LINES": "1"}):
+            self.assertFalse(self.tracker._load_model(file.name, "plate.gcode"))
+        self.assertIsNone(self.tracker.active_model)
+
     @patch("bambu_spoolman.broker.filament_usage_tracker.save_checkpoint")
     @patch("bambu_spoolman.broker.filament_usage_tracker.clear_checkpoint")
     def test_print_start_does_not_checkpoint_invalid_model(
@@ -768,6 +726,21 @@ G1 E5
 
         save_checkpoint.assert_not_called()
         self.assertFalse(os.path.exists(model_file.name))
+
+    @patch("bambu_spoolman.broker.filament_usage_tracker.save_checkpoint")
+    @patch("bambu_spoolman.broker.filament_usage_tracker.clear_checkpoint")
+    def test_checkpoint_failure_still_removes_downloaded_model(self, clear, save):
+        file = tempfile.NamedTemporaryFile(delete=False)
+        file.close()
+        self.addCleanup(lambda: os.path.exists(file.name) and os.remove(file.name))
+        self.tracker._retrieve_model = Mock(return_value=file.name)
+        self.tracker._load_model = Mock(return_value=True)
+        save.side_effect = OSError("disk full")
+        with self.assertRaisesRegex(OSError, "disk full"):
+            self.tracker._handle_print_start(
+                {"url": "file:///model.3mf", "use_ams": False}
+            )
+        self.assertFalse(os.path.exists(file.name))
 
     @patch("bambu_spoolman.broker.filament_usage_tracker.save_checkpoint")
     @patch("bambu_spoolman.broker.filament_usage_tracker.clear_checkpoint")
