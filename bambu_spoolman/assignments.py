@@ -1,9 +1,10 @@
-"""Tray-assignment behavior shared by the HTTP and transitional gRPC APIs."""
+"""Serialized tray-assignment behavior for the HTTP API."""
 
 import asyncio
 
 from loguru import logger
 
+from bambu_spoolman.mapping import serialized_mapping, sync_spool_locations
 from bambu_spoolman.settings import edit_settings
 from bambu_spoolman.spoolman import instance as spoolman_instance
 
@@ -20,6 +21,11 @@ async def assign_spool(tray_id_int, spool_id, client=None):
         raise AssignmentError("Invalid tray ID")
     if type(spool_id) is not int or not -1 <= spool_id <= 2**53 - 1:
         raise AssignmentError("Invalid spool ID")
+    await asyncio.to_thread(_assign_spool, tray_id_int, spool_id, client)
+
+
+@serialized_mapping
+def _assign_spool(tray_id_int, spool_id, client):
     client = client if client is not None else spoolman_instance()
     tray_id = str(tray_id_int)
     logger.info(
@@ -29,7 +35,7 @@ async def assign_spool(tray_id_int, spool_id, client=None):
     )
 
     if spool_id != -1:
-        spool = await asyncio.to_thread(client.get_spool, spool_id)
+        spool = client.get_spool(spool_id)
         if spool is None:
             raise AssignmentError("Spool not found", status=404)
 
@@ -80,22 +86,21 @@ async def assign_spool(tray_id_int, spool_id, client=None):
         )
         raise AssignmentError(validation_error)
 
-    try:
-        if spool_id == -1:
-            if old_spool_id is not None:
-                await asyncio.to_thread(
-                    client.set_active_tray, old_spool_id, None, None
-                )
-        else:
-            ams_num = None if tray_id_int == 255 else (tray_id_int // 4) + 1
-            tray_num = None if tray_id_int == 255 else (tray_id_int % 4) + 1
-            await asyncio.to_thread(client.set_active_tray, spool_id, ams_num, tray_num)
-            if old_spool_id is not None and str(old_spool_id) != str(spool_id):
-                await asyncio.to_thread(
-                    client.set_active_tray, old_spool_id, None, None
-                )
-    except Exception as e:
-        logger.error("Failed to update spool tray fields: {}", e)
+    updates = []
+    if spool_id != -1:
+        ams_num = None if tray_id_int == 255 else (tray_id_int // 4) + 1
+        tray_num = None if tray_id_int == 255 else (tray_id_int % 4) + 1
+        updates.append((spool_id, ams_num, tray_num))
+    if old_spool_id is not None and str(old_spool_id) != str(spool_id):
+        updates.append((old_spool_id, None, None))
+    failed = sync_spool_locations(client, updates)
+    if failed:
+        raise AssignmentError(
+            "Tray mapping saved locally, but Spoolman location updates for "
+            f"spool IDs {', '.join(map(str, failed))} could not be confirmed. "
+            "Check those spools' location fields in Spoolman.",
+            status=502,
+        )
     logger.info(
         "event=tray_assignment_updated tray={} old_spool_id={} spool_id={}",
         tray_id_int,
