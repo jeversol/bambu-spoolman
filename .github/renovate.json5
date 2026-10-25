@@ -113,7 +113,7 @@
       groupName: 'alpine packages',
     },
     {
-      description: 'Keep the shared Node runtime on the supported LTS major',
+      description: 'Keep the Node build toolchain on the supported LTS major',
       matchDatasources: ['apk'],
       matchPackageNames: ['nodejs'],
       allowedVersions: '/^24\\./',
@@ -142,12 +142,6 @@
       matchDatasources: ['docker'],
       matchUpdateTypes: ['minor', 'patch'],
       groupName: 'docker minor and patch dependencies',
-    },
-    {
-      description: 'Keep Next.js and its ESLint configuration aligned',
-      matchManagers: ['npm'],
-      matchPackageNames: ['next', 'eslint-config-next'],
-      groupName: 'next.js packages',
     },
     {
       description: 'Keep React runtime and type packages aligned',

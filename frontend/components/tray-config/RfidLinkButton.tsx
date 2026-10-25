@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { useState } from "react";
 import { linkRfidMapping } from "@/lib/client/rfid";
 import { Alert } from "@/components/ui/alert";
-import { useRouter } from "next/navigation";
 
 type Props = {
   spoolId: number;
@@ -14,7 +13,6 @@ type Props = {
 export function RfidLinkButton({ spoolId, uuid }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const router = useRouter();
 
   const onClick = async () => {
     setLoading(true);
@@ -22,7 +20,6 @@ export function RfidLinkButton({ spoolId, uuid }: Props) {
     try {
       const result = await linkRfidMapping(spoolId, uuid);
       setError(result.error);
-      if (!result.error) router.refresh();
     } finally {
       setLoading(false);
     }

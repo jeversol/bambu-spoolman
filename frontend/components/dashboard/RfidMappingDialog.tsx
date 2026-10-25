@@ -1,7 +1,6 @@
 "use client";
 
 import { AlertCircle, LockKeyhole, X } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button, ButtonLoading } from "@/components/ui/button";
@@ -24,7 +23,6 @@ export function RfidMappingDialog({ tray, onClose }: Props) {
     "override" | "unlink" | null
   >(null);
   const [isPending, startTransition] = useTransition();
-  const router = useRouter();
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -52,7 +50,6 @@ export function RfidMappingDialog({ tray, onClose }: Props) {
 
       dialogRef.current?.close();
       onClose();
-      router.refresh();
     });
   }
 
@@ -72,7 +69,6 @@ export function RfidMappingDialog({ tray, onClose }: Props) {
 
       dialogRef.current?.close();
       onClose();
-      router.refresh();
     });
   }
 

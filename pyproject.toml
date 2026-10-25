@@ -14,8 +14,6 @@ dependencies = [
     "requests>=2.34.2,<3",
     "python-dotenv>=1.2.2,<2",
     "paho-mqtt>=2.1.0,<3",
-    "grpcio>=1.76.0",
-    "protobuf>=6.33.5",
 ]
 
 [project.scripts]
@@ -24,7 +22,6 @@ mqtt-replay = "bambu_spoolman.debug.replay:main"
 
 [dependency-groups]
 dev = [
-    "grpcio-tools>=1.76.0",
     "ruff==0.16.10",
     "setuptools>=83.0.0",
 ]
@@ -32,9 +29,6 @@ dev = [
 [build-system]
 requires = ["hatchling==1.32.4"]
 build-backend = "hatchling.build"
-
-[tool.ruff]
-extend-exclude = ["bambu_spoolman/grpc/*_pb2*"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]

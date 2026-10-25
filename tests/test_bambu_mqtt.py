@@ -87,9 +87,8 @@ class MqttHandlerRecoveryTests(unittest.TestCase):
         old_client.disconnect.assert_called_once_with()
         on_disconnect.assert_called_once_with(handler)
 
-    @patch("bambu_spoolman.bambu_mqtt.time.sleep")
     @patch.object(MqttHandler, "_create_client")
-    def test_parser_error_recreates_client_before_retry(self, create_client, sleep):
+    def test_parser_error_recreates_client_before_retry(self, create_client):
         broken_client = Mock()
         replacement_client = Mock()
         broken_client.loop_forever.side_effect = struct.error(
@@ -99,8 +98,10 @@ class MqttHandlerRecoveryTests(unittest.TestCase):
         create_client.side_effect = [broken_client, replacement_client]
         handler = MqttHandler("printer.test", "serial", "access-code")
 
-        with self.assertRaises(KeyboardInterrupt):
-            handler.run()
+        with patch.object(handler._shutdown_requested, "wait") as sleep:
+            with self.assertRaises(KeyboardInterrupt):
+                handler.run()
+        handler.stop()
 
         self.assertEqual(
             create_client.call_args_list,
@@ -111,6 +112,30 @@ class MqttHandlerRecoveryTests(unittest.TestCase):
             "printer.test", 8883, keepalive=5
         )
         sleep.assert_called_once_with(1)
+
+    @patch.object(MqttHandler, "_create_client")
+    def test_stop_interrupts_retry_and_wakes_idle_dispatcher(self, create_client):
+        import threading
+
+        attempted = threading.Event()
+        client = create_client.return_value
+
+        def unavailable(*args, **kwargs):
+            attempted.set()
+            raise ConnectionError("printer offline")
+
+        client.connect.side_effect = unavailable
+        handler = MqttHandler("printer.test", "serial", "access-code")
+        handler.start()
+        try:
+            self.assertTrue(attempted.wait(1))
+        finally:
+            handler.stop()
+            handler.join(timeout=1)
+            handler.message_dispatcher.join(timeout=1)
+        self.assertFalse(handler.is_alive())
+        self.assertFalse(handler.message_dispatcher.is_alive())
+        client.disconnect.assert_called_once_with()
 
     @patch.object(MqttHandler, "_create_client")
     def test_mqtt_callback_queues_work_off_the_network_thread(self, create_client):

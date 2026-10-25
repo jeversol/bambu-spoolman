@@ -1,36 +1,6 @@
-import { cacheLife, cacheTag } from "next/cache";
-import { backendRequest } from "./server/api";
 import type { PrinterStatus, PrinterTray } from "./types";
 
-type PrinterSnapshot = {
-  lastUpdated: number;
-  connected: boolean;
-  status: PrinterStatus;
-};
-
 const UNDEFINED_RFID_TAG = "00000000000000000000000000000000";
-
-async function getPrinterStatus() {
-  "use cache";
-  cacheLife("seconds");
-  cacheTag("printer");
-
-  const response = await backendRequest<PrinterSnapshot>("/printer");
-  return response;
-}
-
-export async function getPrinterSettings(): Promise<PrinterStatus | null> {
-  const status = await getPrinterStatus();
-  if (!status.connected) {
-    return null;
-  }
-  return status.status as PrinterStatus;
-}
-
-export async function isConnected() {
-  const settings = await getPrinterStatus();
-  return settings.connected;
-}
 
 export function getPrinterTray(
   settings: PrinterStatus | null,
@@ -77,16 +47,4 @@ export function isPrinterTrayOccupied(
       printerTray.tray_info_idx ||
       (printerTray.tray_uuid && printerTray.tray_uuid !== UNDEFINED_RFID_TAG),
   );
-}
-
-export async function getRfidTag(tray: number) {
-  const settings = await getPrinterSettings();
-  const traySettings = getPrinterTray(settings, tray);
-  if (!traySettings) {
-    return null;
-  }
-  if (traySettings.tray_uuid === UNDEFINED_RFID_TAG) {
-    return null;
-  }
-  return traySettings.tray_uuid;
 }

@@ -7,3 +7,6 @@ frontend/.next
 .venv
 .env
 trivy_envs.txt
+
+frontend/dist
+frontend/inventory

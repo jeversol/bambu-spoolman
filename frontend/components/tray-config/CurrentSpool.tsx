@@ -1,18 +1,17 @@
 import { SpoolChip } from "@/components/SpoolChip";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { getSettings } from "@/lib/settings";
-import { getSpool } from "@/lib/spool";
+import { useApplicationData } from "@/lib/application";
 import { AlertCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { ClearButton } from "../../app/ams/[amsId]/tray/[trayId]/ClearButton";
+import { ClearButton } from "./ClearButton";
 
 type Props = {
   trayId: number;
   showClearButton?: boolean;
 };
 
-export async function CurrentSpool(props: Props) {
-  const settings = await getSettings();
+export function CurrentSpool(props: Props) {
+  const { settings, spools } = useApplicationData();
   const spoolId = settings.trays[props.trayId];
   if (!spoolId) {
     return (
@@ -22,7 +21,7 @@ export async function CurrentSpool(props: Props) {
       </Alert>
     );
   }
-  const spool = await getSpool(settings.trays[props.trayId]?.toString() ?? "");
+  const spool = spools.find((value) => value.id === spoolId);
   const locked = settings.lockedTrays.includes(props.trayId);
   if (!spool) {
     return (
