@@ -7,7 +7,11 @@ import signal
 from dotenv import load_dotenv
 from loguru import logger
 
-from bambu_spoolman.bambu_mqtt import MqttHandler, stateful_printer_info
+from bambu_spoolman.bambu_mqtt import (
+    MqttHandler,
+    require_dispatch_reconciliation,
+    stateful_printer_info,
+)
 from bambu_spoolman.broker.automatic_spool_switch import AutomaticSpoolSwitch
 from bambu_spoolman.broker.filament_usage_tracker import FilamentUsageTracker
 from bambu_spoolman.build_info import get_build_info
@@ -15,6 +19,7 @@ from bambu_spoolman.http_api import serve as run_http_server
 
 
 async def async_main():
+    require_dispatch_reconciliation()
     build = get_build_info()
     printer_ip = os.environ.get("PRINTER_IP")
     printer_serial = os.environ.get("PRINTER_SERIAL")
@@ -39,17 +44,17 @@ async def async_main():
         os.environ.get("LOGURU_LEVEL", "INFO"),
     )
     logger.info("event=container_runtime python={}", platform.python_version())
+    mqtt = MqttHandler(
+        printer_ip,
+        printer_serial,
+        os.environ.get("PRINTER_ACCESS_CODE"),
+    )
     loop = asyncio.get_running_loop()
     stopping = asyncio.Event()
     for signum in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(signum, stopping.set)
     server = asyncio.create_task(run_http_server())
     stopped = asyncio.create_task(stopping.wait())
-    mqtt = MqttHandler(
-        printer_ip,
-        printer_serial,
-        os.environ.get("PRINTER_ACCESS_CODE"),
-    )
 
     stateful_printer_info.mqtt_handler = mqtt
 
@@ -63,12 +68,19 @@ async def async_main():
     logger.info("event=automatic_spool_switching_enabled")
     mqtt.add_callback(AutomaticSpoolSwitch.get_instance().on_message)
 
+    def mqtt_failed(handler):
+        usage_tracker.stop()
+        loop.call_soon_threadsafe(stopping.set)
+
+    mqtt.add_on_failure_callback(mqtt_failed)
     mqtt.start()
 
     try:
         done, _ = await asyncio.wait(
             {server, stopped}, return_when=asyncio.FIRST_COMPLETED
         )
+        if mqtt.failure is not None:
+            raise RuntimeError(f"MQTT dispatch failed: {mqtt.failure}")
         if server in done:
             await server  # Propagate listener/startup failures to the container.
             raise RuntimeError("HTTP server stopped unexpectedly")

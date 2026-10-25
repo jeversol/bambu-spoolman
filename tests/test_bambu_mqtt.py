@@ -148,7 +148,7 @@ class MqttHandlerRecoveryTests(unittest.TestCase):
         handler._on_message(None, None, message)
 
         self.assertEqual(
-            handler.message_queue.get_nowait(),
+            handler.message_queue.get_nowait()[0],
             {"print": {"command": "push_status"}},
         )
 
