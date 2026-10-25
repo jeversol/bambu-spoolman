@@ -1,4 +1,4 @@
-"""RFID operations shared by HTTP and the transitional gRPC adapter."""
+"""Serialized RFID operations for HTTP and MQTT mapping coordination."""
 
 import asyncio
 
@@ -6,6 +6,7 @@ import requests
 from loguru import logger
 
 from bambu_spoolman.broker.automatic_spool_switch import AutomaticSpoolSwitch
+from bambu_spoolman.mapping import serialized_mapping
 from bambu_spoolman.settings import load_settings
 from bambu_spoolman.spoolman import instance as spoolman_instance
 
@@ -37,15 +38,20 @@ def switch_instance(switch):
 async def set_spool_rfid(spool_id, uuid, client=None, switch=None):
     identifier(spool_id, "spool ID")
     tag_uuid(uuid, allow_empty=True)
+    await asyncio.to_thread(_set_spool_rfid, spool_id, uuid, client, switch)
+
+
+@serialized_mapping
+def _set_spool_rfid(spool_id, uuid, client, switch):
     client = client if client is not None else spoolman_instance()
-    if await asyncio.to_thread(client.get_spool, spool_id) is None:
+    if client.get_spool(spool_id) is None:
         raise RfidError("Spool not found", status=404)
-    if not await asyncio.to_thread(client.supports_tray_locking):
+    if not client.supports_tray_locking():
         raise RfidError("Spoolman instance does not support tray locking", status=501)
-    if not await asyncio.to_thread(client.set_tray_uuid, spool_id, uuid):
+    if not client.set_tray_uuid(spool_id, uuid):
         raise RfidError("Failed to set RFID association for spool", status=502)
     try:
-        await asyncio.to_thread(switch_instance(switch).sync)
+        switch_instance(switch).sync()
     except Exception as error:
         logger.exception("event=rfid_refresh_failed spool_id={}", spool_id)
         raise RfidError(
@@ -59,9 +65,12 @@ async def set_spool_rfid(spool_id, uuid, client=None, switch=None):
 async def override_rfid(tray_id, uuid, switch=None):
     identifier(tray_id, "tray ID")
     tag_uuid(uuid)
-    if not await asyncio.to_thread(
-        switch_instance(switch).override_tray, tray_id, uuid
-    ):
+    await asyncio.to_thread(_override_rfid, tray_id, uuid, switch)
+
+
+@serialized_mapping
+def _override_rfid(tray_id, uuid, switch):
+    if not switch_instance(switch).override_tray(tray_id, uuid):
         raise RfidError("The RFID tag is no longer present in this tray")
 
 
@@ -69,16 +78,21 @@ async def unlink_rfid(tray_id, spool_id, uuid, client=None, switch=None):
     identifier(tray_id, "tray ID")
     identifier(spool_id, "spool ID")
     tag_uuid(uuid)
-    settings = await asyncio.to_thread(load_settings)
+    await asyncio.to_thread(_unlink_rfid, tray_id, spool_id, uuid, client, switch)
+
+
+@serialized_mapping
+def _unlink_rfid(tray_id, spool_id, uuid, client, switch):
+    settings = load_settings()
     if str(settings.get("trays", {}).get(str(tray_id))) != str(spool_id):
         raise RfidError(
             "Tray assignment changed. Refresh before unlinking.", status=409
         )
     switch = switch_instance(switch)
     # Keep this order: otherwise the MQTT path may recreate the association.
-    await override_rfid(tray_id, uuid, switch)
+    _override_rfid(tray_id, uuid, switch)
     try:
-        await set_spool_rfid(spool_id, "", client, switch)
+        _set_spool_rfid(spool_id, "", client, switch)
     except (RfidError, requests.RequestException) as error:
         raise RfidError(
             "Automatic mapping is paused for this insertion, but permanent "

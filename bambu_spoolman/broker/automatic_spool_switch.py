@@ -1,9 +1,13 @@
 import os
-import threading
 
 from loguru import logger
 
 from bambu_spoolman.bambu_mqtt import stateful_printer_info
+from bambu_spoolman.mapping import (
+    mapping_lock,
+    serialized_mapping,
+    sync_spool_locations,
+)
 from bambu_spoolman.settings import edit_settings, load_settings
 from bambu_spoolman.spoolman import new_client
 
@@ -15,13 +19,14 @@ class AutomaticSpoolSwitch:
     _INSTANCE = None
 
     @classmethod
+    @serialized_mapping
     def get_instance(cls):
         if cls._INSTANCE is None:
             cls._INSTANCE = AutomaticSpoolSwitch()
         return cls._INSTANCE
 
     def __init__(self):
-        self._lock = threading.RLock()
+        self._lock = mapping_lock
         self.spoolman_client = new_client()
         self.tray_mapping = None
         self.tag_mapping = None
@@ -64,6 +69,7 @@ class AutomaticSpoolSwitch:
                 # Check if the trays have changed
                 self._sync(print_obj)
 
+    @serialized_mapping
     def _initial_sync(self, print_obj):
         if self.tag_mapping is None:
             self.tag_mapping = {}
@@ -100,6 +106,7 @@ class AutomaticSpoolSwitch:
                 self.tray_mapping[tray_id] = tray_uuid
                 self.tag_mapping[tray_id] = tag_uid
 
+    @serialized_mapping
     def _sync(self, print_obj):
         prev_tray_mapping = self.tray_mapping.copy()
         prev_tag_mapping = (self.tag_mapping or {}).copy()
@@ -228,6 +235,7 @@ class AutomaticSpoolSwitch:
         overrides = settings.get("rfid_overrides", {})
         return overrides.get(str(tray_id)) == tray_uuid
 
+    @serialized_mapping
     def _clear_override(self, tray_id):
         with edit_settings() as settings:
             overrides = settings.get("rfid_overrides", {})
@@ -268,18 +276,31 @@ class AutomaticSpoolSwitch:
         else:
             self._unlock_tray(tray_id, clear=False)
 
+    @serialized_mapping
     def _lock_spool(self, tray_id, spool_id):
         with edit_settings() as settings:
             trays = settings.get("trays", {})
 
-            # A spool can only occupy one tray at a time.
-            trays = {k: v for k, v in trays.items() if v != spool_id}
+            # Move a spool atomically, releasing its previous tray's RFID lock.
+            displaced = {
+                str(key)
+                for key, value in trays.items()
+                if str(value) == str(spool_id) and str(key) != str(tray_id)
+            }
+            old_spool_id = trays.get(str(tray_id), trays.get(tray_id))
+            trays = {
+                str(key): value
+                for key, value in trays.items()
+                if str(key) != str(tray_id) and str(key) not in displaced
+            }
             trays[str(tray_id)] = spool_id
-
             settings["trays"] = trays
-            settings["locked_trays"] = list(
-                sorted(set(settings.get("locked_trays", []) + [tray_id]))
-            )
+            locked = {
+                int(value)
+                for value in settings.get("locked_trays", [])
+                if str(value) not in displaced
+            }
+            settings["locked_trays"] = sorted(locked | {tray_id})
         logger.info("event=tray_mapping_locked tray={} spool_id={}", tray_id, spool_id)
 
         # Set active tray in Spoolman
@@ -289,17 +310,12 @@ class AutomaticSpoolSwitch:
         ams_num = (tray_id // 4) + 1
         tray_num = (tray_id % 4) + 1
 
-        try:
-            self.spoolman_client.set_active_tray(spool_id, ams_num, tray_num)
-            logger.info(
-                "event=spool_location_updated spool_id={} ams={} tray={}",
-                spool_id,
-                ams_num,
-                tray_num,
-            )
-        except Exception as e:
-            logger.error("Failed to set tray fields for spool {}: {}", spool_id, e)
+        updates = [(spool_id, ams_num, tray_num)]
+        if old_spool_id is not None and str(old_spool_id) != str(spool_id):
+            updates.append((old_spool_id, None, None))
+        sync_spool_locations(self.spoolman_client, updates)
 
+    @serialized_mapping
     def _unlock_tray(self, tray_id, clear=False):
         with edit_settings() as settings:
             locked = settings.get("locked_trays", [])
@@ -332,10 +348,4 @@ class AutomaticSpoolSwitch:
 
         # Clear the tray fields in Spoolman if we're clearing the local mapping
         if clear and spool_id is not None:
-            try:
-                self.spoolman_client.set_active_tray(spool_id, None, None)
-                logger.info("event=spool_location_cleared spool_id={}", spool_id)
-            except Exception as e:
-                logger.error(
-                    "Failed to clear tray fields for spool {}: {}", spool_id, e
-                )
+            sync_spool_locations(self.spoolman_client, [(spool_id, None, None)])

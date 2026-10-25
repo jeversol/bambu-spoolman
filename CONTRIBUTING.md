@@ -139,10 +139,9 @@ tool versions are owned by `.github/docker/Dockerfile.browser`; its driver
 version is derived from the same image tag. No live printer is needed.
 
 MQTT retry waits are interruptible during shutdown. Compose allows 45 seconds
-for in-flight upstream requests and HTTP cleanup before forcing termination. The broader ownership of
-accounting tasks, timers, downloads, and concurrent mapping changes remains in
-the next backend-refactor step; this change does not provide a distributed
-transaction across settings and Spoolman.
+for in-flight upstream requests and HTTP cleanup before forcing termination. Detailed tracker shutdown, model limits and mapping coordination are described
+below. The application does not provide a distributed transaction across local
+settings, printer state and Spoolman.
 
 ## Filament accounting boundary
 
@@ -161,6 +160,35 @@ position-selection function as consumption, preserving layer/line boundaries.
 The existing checkpoint format and timeout reconciliation behavior are retained;
 external concurrent changes to spool totals remain a reconciliation limitation
 for a later change.
+
+## Mapping mutation coordination
+
+API assignment, RFID operations and automatic MQTT switching share one process
+mapping lock in `mapping.py`. The lock spans validation, local persistence and
+remote metadata updates, so an older clear cannot overtake a newer assignment.
+RFID unlink checks the expected assignment, creates the override and removes the
+association inside one operation. All async entrypoints move the entire operation
+to a worker thread; they never hold a thread lock across an `await`.
+
+Automatic switching uses that same reentrant lock for its caches. Moving a spool
+releases its former tray lock, normalizes legacy ID representations and clears
+the replaced spool's optional location fields. The settings file mutex is held
+only for local edits; settings/status reads do not acquire the mapping lock or
+wait for network I/O while holding the file mutex.
+
+Local mappings remain authoritative. Optional location fields disabled in
+Spoolman are a successful no-op. If configured location updates fail, all affected
+updates are still attempted; manual assignment returns 502 describing the saved
+local mapping and affected spool IDs. The operator can inspect/correct those
+location fields in Spoolman. Automatic updates log unconfirmed locations. There
+is no rollback or automatic retry: a timed-out write may already have applied,
+and an old spool's failed cleanup is not guaranteed to recover by resubmitting the
+new assignment. Durable metadata reconciliation remains separate work.
+
+This coordinates writes in the supported single Python process. It does not lock
+physical printer changes, other Spoolman clients, filament-consumption totals or
+multiple application replicas. Backlog/admission limits and external concurrent
+consumption reconciliation remain subsequent backend work.
 
 ## Tracker shutdown and retry ownership
 
