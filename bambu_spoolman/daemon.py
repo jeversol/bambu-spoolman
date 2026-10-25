@@ -10,6 +10,7 @@ from bambu_spoolman.broker.automatic_spool_switch import AutomaticSpoolSwitch
 from bambu_spoolman.broker.filament_usage_tracker import FilamentUsageTracker
 from bambu_spoolman.build_info import get_build_info
 from bambu_spoolman.grpc.server import serve as run_grpc_server
+from bambu_spoolman.http_api import serve as run_http_server
 
 
 async def async_main():
@@ -39,6 +40,7 @@ async def async_main():
     loop = asyncio.get_event_loop()
     tasks = []
     tasks.append(loop.create_task(run_grpc_server()))
+    tasks.append(loop.create_task(run_http_server()))
     mqtt = MqttHandler(
         printer_ip,
         printer_serial,

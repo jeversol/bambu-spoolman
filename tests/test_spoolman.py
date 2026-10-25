@@ -216,3 +216,21 @@ class SpoolmanClientTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SpoolLookupErrorsTests(unittest.TestCase):
+    @patch("bambu_spoolman.spoolman.requests.get")
+    def test_only_not_found_is_treated_as_a_missing_spool(self, get):
+        for status in (404, 401, 500, 503):
+            with self.subTest(status=status):
+                response = Mock(status_code=status)
+                response.raise_for_status.side_effect = requests.HTTPError(
+                    "upstream error", response=response
+                )
+                get.return_value = response
+                client = SpoolmanClient("http://spoolman.test")
+                if status == 404:
+                    self.assertIsNone(client.get_spool(42))
+                else:
+                    with self.assertRaises(requests.HTTPError):
+                        client.get_spool(42)

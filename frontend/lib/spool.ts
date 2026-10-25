@@ -1,5 +1,22 @@
 import { cacheLife, cacheTag } from "next/cache";
-import { grpcClient } from "./grpc";
+import { ApiError } from "./api";
+import { backendRequest } from "./server/api";
+import { Spool } from "./proto/bambu_spoolman/grpc/spoolman";
+
+// Preserve the existing UI model during the transport migration. Spoolman's
+// raw HTTP fields use snake_case; custom extra-field keys must remain untouched.
+function uiFields(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(uiFields);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [
+        key.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase()),
+        key === "extra" ? child : uiFields(child),
+      ]),
+    );
+  }
+  return value;
+}
 
 function getCacheTag(id: string) {
   return `spool-${id}`;
@@ -10,11 +27,15 @@ export async function getSpool(id: string) {
   cacheLife("seconds");
   cacheTag(getCacheTag(id));
 
-  const response = await grpcClient.getSpools({ spoolId: [id] });
-  if (response.spools.length === 0) {
-    return null;
+  try {
+    const response = await backendRequest<unknown>(
+      `/spools/${encodeURIComponent(id)}`,
+    );
+    return Spool.fromJSON(uiFields(response));
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return null;
+    throw error;
   }
-  return response.spools[0];
 }
 
 export async function getAllSpools() {
@@ -22,6 +43,6 @@ export async function getAllSpools() {
   cacheLife("seconds");
   cacheTag("all-spools");
 
-  const response = await grpcClient.getSpools({});
-  return response.spools;
+  const response = await backendRequest<{ spools: unknown[] }>("/spools");
+  return response.spools.map((spool) => Spool.fromJSON(uiFields(spool)));
 }

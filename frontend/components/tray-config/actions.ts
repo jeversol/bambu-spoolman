@@ -1,8 +1,4 @@
-"use server";
-
-import { grpcClient } from "@/lib/grpc";
-import { getSettings } from "@/lib/settings";
-import { revalidateTag } from "next/cache";
+import { apiRequest } from "@/lib/api";
 
 export type UpdateTrayAssignmentActionData = {
   error: string | null;
@@ -12,37 +8,13 @@ export async function updateTrayAssignment(
   trayId: number,
   spoolId: number,
 ): Promise<UpdateTrayAssignmentActionData> {
-  const settings = await getSettings();
-  if (settings.lockedTrays.includes(trayId)) {
-    return {
-      error: "This spool is locked and cannot be modified",
-    };
-  }
-  const existingAssignment = Object.entries(settings.trays).find(
-    ([existingTrayId, existingSpoolId]) =>
-      Number(existingTrayId) !== trayId && existingSpoolId === spoolId,
-  );
-
-  if (existingAssignment) {
-    const [conflictTrayId] = existingAssignment;
-
-    if (conflictTrayId == "255") {
-      return {
-        error: "This spool is already assigned to the External Spool Holder",
-      };
-    }
-
-    return {
-      error: `This spool is already assigned to Slot ${(Number(conflictTrayId) % 4) + 1} in AMS ${Math.floor(Number(conflictTrayId) / 4) + 1}`,
-    };
-  }
-
   try {
-    await grpcClient.updateTray({ spoolId, trayId });
-    revalidateTag("settings", "max");
-    return {
-      error: null,
-    };
+    await apiRequest<void>(`/trays/${trayId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ spoolId }),
+    });
+    return { error: null };
   } catch (error) {
     return {
       error:

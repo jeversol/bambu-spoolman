@@ -1,6 +1,12 @@
 import { cacheLife, cacheTag, revalidateTag } from "next/cache";
-import { grpcClient } from "./grpc";
+import { backendRequest } from "./server/api";
 import { getSpool } from "./spool";
+
+export type Settings = {
+  trays: Record<string, number>;
+  trayCount: number;
+  lockedTrays: number[];
+};
 
 export async function revalidateSettings() {
   "use server";
@@ -12,7 +18,7 @@ export async function getSettings() {
   cacheLife("seconds");
   cacheTag("settings");
 
-  const response = await grpcClient.getSettings({});
+  const response = await backendRequest<Settings>("/settings");
   return response;
 }
 
