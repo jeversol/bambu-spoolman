@@ -6,6 +6,7 @@ import sys
 
 REQUIRED_JOBS = frozenset(
     {
+        "renovate-policy",
         "backend",
         "frontend",
         "build-image",

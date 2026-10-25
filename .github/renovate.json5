@@ -4,20 +4,19 @@
   timezone: 'America/New_York',
   prConcurrentLimit: 5,
   dependencyDashboard: true,
-  // main doesn't require PRs to be up to date (publish re-verifies main), so
-  // only rebase when a branch actually conflicts.
-  rebaseWhen: 'conflicted',
+  // Re-test Renovate branches whenever main advances, not just on conflicts.
+  rebaseWhen: 'behind-base-branch',
   prCreation: 'immediate',
-  // Release age is enforced here only (pnpm's check is disabled), and Renovate
-  // waits it out before creating a branch.
-  minimumReleaseAge: '1 day',
+  // Only timestamp-capable release sources receive the cooldown below.
+  // pnpm's own age check remains disabled.
+  minimumReleaseAge: null,
+  minimumReleaseAgeBehaviour: 'timestamp-required',
   internalChecksFilter: 'strict',
-  // Dependabot supplies vulnerability intelligence; Renovate is the sole PR
-  // generator. Security fixes bypass normal schedules and require the
-  // repository's tests and human review. Only critical fixes skip the release
-  // age (see packageRules).
+  // Dependabot supplies intelligence; Renovate alone creates update PRs.
+  // All security fixes bypass cooldowns and schedules, but require human review.
   vulnerabilityAlerts: {
     enabled: true,
+    minimumReleaseAge: null,
     labels: ['security'],
     prCreation: 'immediate',
     rangeStrategy: 'update-lockfile',
@@ -44,20 +43,28 @@
     },
   ],
   // Renovate checks release age and CI before merging; GitHub rules still apply.
+  automerge: false,
+  ignoreTests: false,
   automergeType: 'pr',
   platformAutomerge: false,
   packageRules: [
     {
-      description: 'Update the Renovate pre-commit hook once a week',
-      matchPackageNames: ['renovatebot/pre-commit-hooks'],
-      matchUpdateTypes: ['patch', 'minor'],
-      schedule: ['* 0-4 * * 1'],
-      automerge: true,
+      description: 'Wait at least one day for timestamped package and tool releases',
+      matchDatasources: ['npm', 'pypi', 'github-tags', 'github-releases', 'apk'],
+      minimumReleaseAge: '1 day',
     },
     {
-      description: 'Automerge stable non-major updates after CI passes',
-      matchCurrentVersion: '!/^0/',
-      matchUpdateTypes: ['minor', 'patch'],
+      description: 'Do not invent release ages for digest changes or existing pins',
+      matchUpdateTypes: ['digest', 'pinDigest', 'pin', 'lockFileMaintenance'],
+      minimumReleaseAge: null,
+    },
+    {
+      description: 'Update and validate the Renovate hook once a week',
+      matchManagers: ['pre-commit'],
+      matchPackageNames: ['renovatebot/pre-commit-hooks'],
+      matchUpdateTypes: ['patch', 'minor'],
+      groupName: 'renovate validator',
+      schedule: ['* 0-4 * * 1'],
       automerge: true,
     },
     {
@@ -66,6 +73,14 @@
       matchFileNames: ['Dockerfile'],
       matchPackageNames: ['python'],
       allowedVersions: '/^3\\.14-alpine3\\.24$/',
+    },
+    {
+      description: 'Exercise only the chosen next Python minor, including prereleases',
+      matchManagers: ['dockerfile'],
+      matchFileNames: ['.github/docker/Dockerfile.next-python'],
+      matchPackageNames: ['python'],
+      allowedVersions: '/^3\\.15(?:[.-]|$)/',
+      ignoreUnstable: false,
     },
     {
       description: 'Keep the Python project requirement on the supported minor',
@@ -80,7 +95,7 @@
       rangeStrategy: 'pin',
     },
     {
-      description: 'Automerge production Python image rebuilds after CI',
+      description: 'Automerge verified production Python base digest updates',
       matchManagers: ['dockerfile'],
       matchFileNames: ['Dockerfile'],
       matchPackageNames: ['python'],
@@ -108,13 +123,6 @@
       matchManagers: ['npm'],
       matchPackageNames: ['@types/node'],
       allowedVersions: '<25',
-    },
-    {
-      description: 'Ship critical security fixes without the release-age wait',
-      matchJsonata: [
-        "isVulnerabilityAlert = true and $uppercase(vulnerabilitySeverity) = 'CRITICAL'",
-      ],
-      minimumReleaseAge: null,
     },
     {
       description: 'Group minor and patch npm updates',
