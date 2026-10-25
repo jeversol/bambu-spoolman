@@ -29,9 +29,7 @@ container_id=$(docker run --detach \
     --read-only --cap-drop ALL --cap-add CHOWN --cap-add SETGID --cap-add SETUID \
     --security-opt no-new-privileges:true \
     --tmpfs /tmp:uid=10001,gid=10001,mode=1777 \
-    --tmpfs /app/frontend/.next/cache:uid=10001,gid=10001,mode=0700 \
     --volume "$volume:/config" \
-    --env GRPC_SERVER_URL=http://127.0.0.1:1 \
     --env PRINTER_IP=127.0.0.1 \
     --env PRINTER_SERIAL=container-smoke-test \
     --env PRINTER_ACCESS_CODE=unused \
@@ -61,7 +59,7 @@ wait_ready() {
 }
 
 stop_gracefully() {
-    docker stop --timeout 10 "$container_id" >/dev/null
+    docker stop --timeout 45 "$container_id" >/dev/null
     state=$(docker inspect --format '{{.State.ExitCode}} {{.State.OOMKilled}} {{.State.Running}}' "$container_id")
     if [ "$state" != '0 false false' ]; then
         docker logs "$container_id"
@@ -71,9 +69,20 @@ stop_gracefully() {
     docker logs "$container_id" 2>&1 | grep -q 'event=container_shutdown_complete'
 }
 
+docker build --file "$repository_root/.github/docker/Dockerfile.browser" --tag bambu-spoolman:browser-smoke "$repository_root"
 wait_ready 42
+docker exec --interactive --user 10001:10001 "$container_id" sh -c 'cat > /tmp/smoke_spoolman.py' < "$repository_root/scripts/smoke_spoolman.py"
+docker exec --detach --user 10001:10001 "$container_id" /venv/bin/python /tmp/smoke_spoolman.py
+# Wait for the disposable upstream independently of application readiness.
+attempt=0
+until docker exec "$container_id" /venv/bin/python -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:50053/api/v1/health", timeout=1).close()' >/dev/null 2>&1; do
+    attempt=$((attempt + 1))
+    test "$attempt" -lt 15 || exit 1
+    sleep 1
+done
 docker exec --interactive --user 10001:10001 "$container_id" \
     /venv/bin/python - < "$repository_root/scripts/assignment_smoke_probe.py"
+docker run --rm --network "container:$container_id" --shm-size=256m bambu-spoolman:browser-smoke
 docker exec --interactive --user 10001:10001 "$container_id" /venv/bin/python - <<'PY'
 from bambu_spoolman.settings import edit_settings
 with edit_settings() as settings:

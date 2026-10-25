@@ -12,7 +12,6 @@ FROM python_base AS runtime_base
 
 RUN apk add --no-cache \
         'libuuid>=2.42.3-r0' \
-        nodejs=24.22.1-r0 \
         su-exec=0.3-r0 \
     && addgroup -S -g 10001 bambu-spoolman \
     && adduser -S -D -H -u 10001 -G bambu-spoolman bambu-spoolman \
@@ -53,8 +52,6 @@ COPY . .
 
 RUN uv sync --locked
 
-RUN scripts/update_protos.sh
-
 RUN uv export --locked --no-dev --no-emit-project \
     --format requirements-txt --output-file /tmp/requirements.txt \
     && uv pip install --python /venv/bin/python \
@@ -70,10 +67,10 @@ RUN .venv/bin/python -m unittest discover -s tests \
     && touch /tmp/backend-verified
 
 
-# Build, audit, and production use the same Node package and Alpine release.
+# Node is a build/audit tool only; production runs Python and static assets.
 FROM runtime_base AS frontend_toolchain
 
-RUN apk add --no-cache npm=11.12.1-r0
+RUN apk add --no-cache nodejs=24.22.1-r0 npm=11.12.1-r0
 
 COPY frontend/package.json /app/frontend/package.json
 RUN pnpm_version=$(node -p "require('/app/frontend/package.json').packageManager.split('@')[1]") \
@@ -123,12 +120,12 @@ LABEL org.opencontainers.image.title="bambu-spoolman" \
       io.github.jeversol.bambu-spoolman.build-number=${BAMBU_SPOOLMAN_BUILD_NUMBER}
 
 COPY --from=builder /venv /venv
-COPY --from=frontend_builder /app/frontend/public /app/frontend/public
-COPY --from=frontend_builder /app/frontend/.next/standalone /app/frontend
-COPY --from=frontend_builder /app/frontend/.next/static /app/frontend/.next/static
+COPY --from=frontend_builder /app/frontend/dist /app/static
+# Scanner metadata for the browser's production npm dependency closure. This is
+# outside the web root and contains package metadata, not executable Node code.
+COPY --from=frontend_builder /app/frontend/inventory /app/frontend-inventory
 
 COPY --chmod=755 scripts/container-init.sh /app/container-init.sh
-COPY --chmod=755 scripts/container-entrypoint.sh /app/container-entrypoint.sh
 
 ENTRYPOINT ["/app/container-init.sh"]
 

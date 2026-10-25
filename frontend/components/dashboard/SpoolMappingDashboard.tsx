@@ -7,7 +7,7 @@ import {
   LockKeyhole,
   WifiOff,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRefresh } from "@/lib/application";
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -35,14 +35,14 @@ type Props = {
 const DASHBOARD_REFRESH_INTERVAL_MS = 5_000;
 
 function useDashboardAutoRefresh(paused: boolean) {
-  const router = useRouter();
+  const refresh = useRefresh(false);
 
   useEffect(() => {
     if (paused) return;
 
     const refreshWhenVisible = () => {
       if (document.visibilityState === "visible") {
-        router.refresh();
+        refresh();
       }
     };
 
@@ -56,7 +56,7 @@ function useDashboardAutoRefresh(paused: boolean) {
       window.clearInterval(interval);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-  }, [paused, router]);
+  }, [paused, refresh]);
 }
 
 function SpoolMeter({ spool }: { spool: DashboardSpool | null }) {
@@ -168,7 +168,7 @@ function TrayCard({
             ? `${printerColorName ? `${printerColorName} · ` : ""}${
                 rfidEnabled
                   ? "RFID detected, not linked to Spoolman"
-                : "RFID detected · requires Spoolman v0.27+ or an RFID field"
+                  : "RFID detected · requires Spoolman v0.27+ or an RFID field"
               }`
             : tray.printerName
               ? `${printerColorName ? `${printerColorName} · ` : ""}Reported by printer`

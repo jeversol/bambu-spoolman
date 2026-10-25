@@ -64,6 +64,13 @@ For older Spoolman versions, create a spool-level Text custom field and set
 mappings migrate as their spools are encountered; remove the fallback once migration
 is complete.
 
+### Application architecture
+
+The container runs one Python process serving the React dashboard and HTTP API
+on port 3000. React is compiled with Vite during the image build; Node.js is
+not installed in the production image. Existing dashboard and tray URLs remain
+unchanged. No internal gRPC listener or separate frontend server is required.
+
 ### Custom container deployments
 
 The supplied Compose file includes the required permissions and writable mounts.
@@ -72,8 +79,9 @@ For custom Docker or Kubernetes configurations:
 - Allow startup as root with `CHOWN`, `SETGID`, and `SETUID`. The container fixes
   data ownership, then runs the app as `10001:10001` without capabilities.
 - Do not force `runAsUser` or `runAsNonRoot`.
-- Keep `/config`, `/tmp`, and `/app/frontend/.next/cache` writable. The rest of the
+- Keep `/config` and `/tmp` writable. The rest of the
   filesystem can be read-only, with privilege escalation disabled.
+- Allow a 45-second stop grace period for in-flight upstream requests.
 - If storage denies ownership changes, provision `/config` with ownership
   `10001:10001`.
 

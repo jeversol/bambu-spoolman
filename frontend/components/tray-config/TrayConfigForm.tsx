@@ -2,7 +2,6 @@
 
 import { type IDetectedBarcode, Scanner } from "@yudiel/react-qr-scanner";
 import { AlertCircle, SearchIcon } from "lucide-react";
-import { useRouter } from "next/navigation";
 import {
   useActionState,
   useMemo,
@@ -66,7 +65,6 @@ export function TrayConfigForm(props: Props) {
   const scanHandledRef = useRef(false);
   const [isQrPending, startQrTransition] = useTransition();
   const cameraAvailable = useCameraAvailable();
-  const router = useRouter();
 
   const [state, formAction, isPending] = useActionState(
     async (_prev: UpdateTrayAssignmentActionData) => {
@@ -74,10 +72,6 @@ export function TrayConfigForm(props: Props) {
         props.trayId,
         Number(selectedSpool),
       );
-
-      if (!result.error) {
-        router.refresh();
-      }
 
       return result;
     },
@@ -119,7 +113,6 @@ export function TrayConfigForm(props: Props) {
       }
 
       setChanged(false);
-      router.refresh();
     });
   };
 

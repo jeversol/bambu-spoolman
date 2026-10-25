@@ -272,6 +272,7 @@ class MqttHandler(threading.Thread):
         self.printer_serial = printer_serial
         self.printer_access_code = printer_access_code
         self.connected = False
+        self._shutdown_requested = threading.Event()
         self.pending_messages = []
         self.pending_messages_lock = threading.Lock()
 
@@ -296,7 +297,7 @@ class MqttHandler(threading.Thread):
             "event=mqtt_dispatcher_started printer_serial={}", self.printer_serial
         )
         last_error = None
-        while True:
+        while not self._shutdown_requested.is_set():
             try:
                 logger.info(
                     "event=mqtt_connect_attempt printer_serial={} printer_ip={} "
@@ -312,14 +313,14 @@ class MqttHandler(threading.Thread):
                         f"Connection to printer {self.printer_serial} timed out"
                     )
                 last_error = "TimeoutError"
-                time.sleep(5)
+                self._shutdown_requested.wait(5)
             except ConnectionError:
                 if last_error != "ConnectionError":
                     logger.warning(
                         f"Connection to printer {self.printer_serial} failed"
                     )
                 last_error = "ConnectionError"
-                time.sleep(5)
+                self._shutdown_requested.wait(5)
             except OSError as e:
                 if e.errno == 113:
                     if last_error != "oserror113":
@@ -328,21 +329,26 @@ class MqttHandler(threading.Thread):
                             self.printer_serial,
                         )
                     last_error = "oserror113"
-                    time.sleep(5)
+                    self._shutdown_requested.wait(5)
                 else:
                     duration = self._backoff()
                     logger.error(
                         f"Error occurred in MQTT loop. Retrying in {duration}s: {e}"
                     )
                     self._reset_client()
-                    time.sleep(duration)
+                    self._shutdown_requested.wait(duration)
             except Exception as e:
                 duration = self._backoff()
                 logger.exception(
                     f"Error occurred in MQTT loop. Retrying in {duration}s: {e}"
                 )
                 self._reset_client()
-                time.sleep(duration)
+                self._shutdown_requested.wait(duration)
+
+    def stop(self):
+        self._shutdown_requested.set()
+        self.client.disconnect()
+        self.message_queue.put(None)
 
     def add_callback(self, callback: Callable[["MqttHandler", dict], None]):
         self.callbacks["on_message"].append(callback)
@@ -412,6 +418,9 @@ class MqttHandler(threading.Thread):
     def _dispatch_messages(self):
         while True:
             message = self.message_queue.get()
+            if message is None:
+                self.message_queue.task_done()
+                return
             started_at = time.monotonic()
             try:
                 for callback in self.callbacks["on_message"]:

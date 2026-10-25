@@ -3,14 +3,11 @@ import os
 import tempfile
 import threading
 import unittest
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock, patch
 
-import grpc
 import requests
 from aiohttp.test_utils import TestClient, TestServer
 
-from bambu_spoolman.grpc.bambu_spoolman_pb2 import UpdateTrayRequest
-from bambu_spoolman.grpc.server import BambuSpoolmanServicer
 from bambu_spoolman.http_api import create_app
 from bambu_spoolman.settings import load_settings, save_settings
 
@@ -139,22 +136,3 @@ class HttpApiTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.get("/api/v1/spools")
         self.assertEqual(response.status, 500)
         self.assertEqual((await response.json())["error"], "Internal server error")
-
-    async def test_grpc_adapter_and_http_share_assignment_rules(self):
-        context = Mock()
-        context.abort = AsyncMock(side_effect=RuntimeError("aborted"))
-        with patch(
-            "bambu_spoolman.assignments.spoolman_instance", return_value=self.spoolman
-        ):
-            await BambuSpoolmanServicer().UpdateTray(
-                UpdateTrayRequest(tray_id=0, spool_id=42), context
-            )
-            self.assertEqual((await self.assign(1, 42)).status, 400)
-            with self.assertRaisesRegex(RuntimeError, "aborted"):
-                await BambuSpoolmanServicer().UpdateTray(
-                    UpdateTrayRequest(tray_id=1, spool_id=42), context
-                )
-            self.assertEqual(
-                context.abort.await_args.args[0], grpc.StatusCode.INVALID_ARGUMENT
-            )
-        self.assertEqual(load_settings()["trays"], {"0": 42})

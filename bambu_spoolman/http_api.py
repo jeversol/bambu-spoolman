@@ -1,7 +1,11 @@
-"""Loopback HTTP API for the incremental migration away from internal gRPC."""
+"""Single HTTP service for the dashboard and application API."""
 
 import asyncio
 import json
+import os
+import re
+from pathlib import Path
+from urllib.parse import urlsplit
 
 import requests
 from aiohttp import web
@@ -27,6 +31,25 @@ PRINTER = web.AppKey("printer", object)
 @web.middleware
 async def errors(request, handler):
     try:
+        if request.path.startswith("/api/") and request.method not in {
+            "GET",
+            "HEAD",
+            "OPTIONS",
+        }:
+            origin = request.headers.get("Origin")
+            if origin:
+                try:
+                    parsed = urlsplit(origin)
+                except ValueError:
+                    raise web.HTTPForbidden(reason="Invalid browser origin") from None
+                if (
+                    parsed.scheme not in {"http", "https"}
+                    or parsed.netloc != request.host
+                    or parsed.path
+                    or parsed.query
+                    or parsed.fragment
+                ):
+                    raise web.HTTPForbidden(reason="Foreign browser origin")
         response = await handler(request)
     except (AssignmentError, RfidError) as error:
         response = web.json_response({"error": str(error)}, status=error.status)
@@ -38,7 +61,7 @@ async def errors(request, handler):
     except Exception:
         logger.exception("event=http_request_failed")
         response = web.json_response({"error": "Internal server error"}, status=500)
-    response.headers["Cache-Control"] = "no-store"
+    response.headers.setdefault("Cache-Control", "no-store")
     return response
 
 
@@ -145,7 +168,53 @@ async def rfid_unlink(request):
     return web.Response(status=204)
 
 
-def create_app(client=None, switch=None, printer=None):
+def static_handler(directory):
+    root = Path(directory).resolve()
+    # Inventory the trusted build output once. Request strings are only lookup
+    # keys; they never become filesystem paths. Assets are immutable in the
+    # supported read-only container; rebuild/restart to publish a new asset set.
+    assets = {}
+    for file in root.rglob("*"):
+        relative = file.relative_to(root)
+        if any(part.startswith(".") for part in relative.parts):
+            continue
+        if file.is_symlink() or not file.is_file():
+            continue
+        resolved = file.resolve()
+        if resolved.is_relative_to(root):
+            assets[relative.as_posix()] = resolved
+    index = assets.get("index.html")
+
+    async def serve_static(request):
+        path = request.match_info["path"]
+        if path == "api" or path.startswith("api/"):
+            raise web.HTTPNotFound()
+        candidate = assets.get(path)
+        if candidate is not None:
+            if not candidate.is_file():
+                raise web.HTTPNotFound()
+            response = web.FileResponse(candidate)
+            response.headers["Cache-Control"] = (
+                "public, max-age=31536000, immutable"
+                if path.startswith("assets/")
+                else "no-cache"
+            )
+            return response
+        # Only application routes fall back to HTML. Missing scripts and unknown
+        # API routes must never receive an apparently successful HTML response.
+        valid = path in {"", "external-spool"} or re.fullmatch(
+            r"ams/[1-9]\d*/tray/[1-4]", path
+        )
+        if not valid:
+            raise web.HTTPNotFound()
+        if index is None or not index.is_file():
+            raise web.HTTPServiceUnavailable(reason="Dashboard assets are unavailable")
+        return web.FileResponse(index, headers={"Cache-Control": "no-cache"})
+
+    return serve_static
+
+
+def create_app(client=None, switch=None, printer=None, static_dir=None):
     app = web.Application(middlewares=[errors], client_max_size=4096)
     app[CLIENT] = client if client is not None else spoolman_instance()
     app[SWITCH] = switch
@@ -163,10 +232,16 @@ def create_app(client=None, switch=None, printer=None):
             web.put(r"/api/v1/trays/{tray_id:\d+}", assignment),
         ]
     )
+    app.router.add_get(
+        "/{path:.*}",
+        static_handler(
+            static_dir or os.environ.get("BAMBU_SPOOLMAN_STATIC", "/app/static")
+        ),
+    )
     return app
 
 
-async def serve(host="127.0.0.1", port=50052):
+async def serve(host="0.0.0.0", port=3000):
     runner = web.AppRunner(create_app(), shutdown_timeout=5)
     try:
         await runner.setup()

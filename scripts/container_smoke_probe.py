@@ -2,14 +2,12 @@
 
 import json
 import os
+import shutil
+import socket
 import sys
 import tempfile
 import urllib.request
-
-import grpc
-from google.protobuf.empty_pb2 import Empty
-
-from bambu_spoolman.grpc.bambu_spoolman_pb2_grpc import BambuSpoolmanStub
+from pathlib import Path
 
 
 def probe(expected_spool):
@@ -17,9 +15,12 @@ def probe(expected_spool):
         f"http://{os.environ['HOSTNAME']}:3000/manifest.webmanifest", timeout=2
     ) as response:
         assert response.status == 200
-    with grpc.insecure_channel("127.0.0.1:50051") as channel:
-        settings = BambuSpoolmanStub(channel).GetSettings(Empty(), timeout=2)
-        assert settings.trays["0"] == expected_spool, settings
+    assert shutil.which("node") is None
+    assert "python" in Path("/proc/1/exe").resolve().name
+    for port in (50051, 50052):
+        with socket.socket() as probe_socket:
+            probe_socket.settimeout(0.2)
+            assert probe_socket.connect_ex(("127.0.0.1", port)) != 0
     with urllib.request.urlopen(
         f"http://{os.environ['HOSTNAME']}:3000/api/v1/settings", timeout=2
     ) as response:
@@ -31,7 +32,7 @@ def probe(expected_spool):
         status = dict(line.split(":", 1) for line in status_file if ":" in line)
     assert int(status["CapEff"].strip(), 16) == 0
     assert status["NoNewPrivs"].strip() == "1"
-    for directory in ("/config", "/tmp", "/app/frontend/.next/cache"):
+    for directory in ("/config", "/tmp"):
         with tempfile.TemporaryFile(dir=directory) as writable:
             writable.write(b"smoke test")
     for path in ("/config/settings.json", "/config/checkpoint/smoke-test.json"):

@@ -1,0 +1,9 @@
+# The image tag owns both browser binaries and the matching driver version.
+FROM mcr.microsoft.com/playwright:v1.64.1-noble@sha256:47b510dd9230bf0b9bfc9b20102241e577ea7a99334ab4c3ca19f19770e9b8ea
+WORKDIR /browser
+COPY .github/docker/Dockerfile.browser /tmp/browser.Dockerfile
+RUN version=$(sed -n 's|^FROM mcr.microsoft.com/playwright:v\([^@]*\)-noble@.*|\1|p' /tmp/browser.Dockerfile) \
+    && test -n "$version" \
+    && npm install --save-exact "playwright@$version"
+COPY scripts/browser-smoke.mjs /browser/browser-smoke.mjs
+ENTRYPOINT ["node", "/browser/browser-smoke.mjs"]

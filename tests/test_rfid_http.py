@@ -3,16 +3,13 @@ import os
 import tempfile
 import threading
 import unittest
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock, patch
 
-import grpc
 import requests
 from aiohttp.test_utils import TestClient, TestServer
 
 from bambu_spoolman.bambu_mqtt import StatefulPrinterInfo
 from bambu_spoolman.broker.automatic_spool_switch import AutomaticSpoolSwitch
-from bambu_spoolman.grpc.bambu_spoolman_pb2 import SetSpoolUUIDRequest
-from bambu_spoolman.grpc.server import BambuSpoolmanServicer
 from bambu_spoolman.http_api import create_app
 from bambu_spoolman.settings import load_settings, save_settings
 
@@ -211,28 +208,6 @@ class RfidHttpTests(unittest.IsolatedAsyncioTestCase):
         finally:
             release.set()
             await info
-
-    async def test_grpc_adapter_uses_same_link_rules(self):
-        context = Mock(abort=AsyncMock(side_effect=RuntimeError("aborted")))
-        with (
-            patch("bambu_spoolman.rfid.spoolman_instance", return_value=self.spoolman),
-            patch(
-                "bambu_spoolman.rfid.AutomaticSpoolSwitch.get_instance",
-                return_value=self.switch,
-            ),
-        ):
-            await BambuSpoolmanServicer().SetTrayUUID(
-                SetSpoolUUIDRequest(spool_id=42, uuid=TAG), context
-            )
-            self.spoolman.set_tray_uuid.assert_called_once_with(42, TAG)
-            self.spoolman.supports_tray_locking.return_value = False
-            with self.assertRaisesRegex(RuntimeError, "aborted"):
-                await BambuSpoolmanServicer().SetTrayUUID(
-                    SetSpoolUUIDRequest(spool_id=42, uuid=TAG), context
-                )
-            self.assertEqual(
-                context.abort.await_args.args[0], grpc.StatusCode.UNIMPLEMENTED
-            )
 
     async def test_slow_rfid_refresh_does_not_block_status_polling(self):
         started, release = threading.Event(), threading.Event()

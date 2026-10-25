@@ -2,10 +2,10 @@
 
 ## Runtime and tool versions
 
-Production, frontend builds, and dependency audits inherit the same Alpine
-Node.js package from `runtime_base` in `Dockerfile`. Do not add a separate Node
-image or install another Node version in the audit script. The frontend supports
-Node 24, enforced by `engines.node` and pnpm's `engineStrict` setting.
+Production runs Python and compiled React assets on one HTTP listener. Node.js
+is installed only in the shared `frontend_toolchain` build/audit stage. Its Alpine
+package is pinned in `Dockerfile`; do not add another Node image to the audit
+script. Node 24 is enforced by `engines.node` and pnpm's `engineStrict` setting.
 
 | Component | Version source | Automated updates |
 | --- | --- | --- |
@@ -13,8 +13,9 @@ Node 24, enforced by `engines.node` and pnpm's `engineStrict` setting.
 | Node, npm, su-exec, libuuid | `apk add` specifications in `Dockerfile` | Renovate APK datasource, scoped to Alpine 3.24 repositories |
 | pnpm | `frontend/package.json` `packageManager` | Renovate npm manager; shared toolchain reads this value |
 | Frontend libraries, TypeScript | `frontend/package.json` and `pnpm-lock.yaml` | Renovate npm manager and lockfile maintenance |
-| Python libraries, grpcio-tools, Ruff | `pyproject.toml` and `uv.lock` | Renovate Python managers and lockfile maintenance |
+| Python libraries, Ruff | `pyproject.toml` and `uv.lock` | Renovate Python managers and lockfile maintenance |
 | Python wheel build backend | `pyproject.toml` `build-system.requires` | Renovate Python manager |
+| Browser smoke tools | Pinned Playwright image in `.github/docker/Dockerfile.browser` | Renovate Dockerfile manager |
 | uv | Pinned image references in both Dockerfiles | Renovate Dockerfile manager |
 | pip-audit | Version pin in `scripts/security-audit.sh` | Renovate custom regex manager |
 | Trivy binary | Annotated `version` input in `.github/actions/scan-image/action.yaml` | Renovate GitHub Actions manager, independently of the action version |
@@ -37,8 +38,7 @@ release rather than switching to `edge` or removing the version constraint.
 
 For a version change, run `docker build --target verified_app .`,
 `sh scripts/security-audit.sh gate`, and the production container smoke test.
-The container logs `event=container_runtime` with its actual Node and Python
-versions at startup; the image scan checks installed OS and library packages.
+The container logs `event=container_runtime` with its Python version at startup; the image scan checks installed OS and library packages.
 
 ## Renovate policy
 
@@ -83,88 +83,66 @@ include prereleases. Production Python promotion remains a separate reviewed cha
 References: [Renovate release age](https://docs.renovatebot.com/key-concepts/minimum-release-age/)
 and [configuration options](https://docs.renovatebot.com/configuration-options/).
 
-## Application consolidation: assignment flow
+## Application architecture and development
 
-Spool assignment uses the Python HTTP API. React components and both assignment dialogs remain in place.
-The dashboard, external-holder page, and individual tray pages read settings and
-inventory through HTTP; assigning and clearing use browser JSON requests.
-Successful mutations invalidate the settings cache immediately before refreshing
-the page. Dashboard polling continues on its existing interval.
+The production container runs one Python process as PID 1, serving the compiled
+React dashboard and `/api/v1` on port 3000. Node, Next.js, internal gRPC/protobuf,
+and shell process supervision are removed. React Router preserves `/`,
+`/external-spool`, and `/ams/<ams>/tray/<slot>` deep links. Python serves HTML
+with revalidation and hashed assets with immutable caching. Files outside the
+static root, dotfiles, missing assets, and unknown API routes never receive the
+application HTML fallback. At startup Python inventories the built assets; URLs
+only select entries from that allowlist, never construct filesystem paths.
+Symlinks are excluded. Rebuild/restart to publish a changed asset set.
 
-Python owns the assignment rules in `bambu_spoolman/assignments.py`. The new HTTP
-handler and transitional gRPC handler both call that service, so locked trays,
-duplicate assignments, persistence, and Spoolman synchronization have one owner.
-Spoolman 404 means a missing spool; upstream authorization/server/network errors
-remain errors instead of appearing as a deleted spool.
+Vite builds the UI; TypeScript 6 (`tsc6`) and ESLint run before release. For
+separate development processes, run `uv run bambu-spoolman-broker` with the
+normal printer/Spoolman environment, then `pnpm dev` in `frontend`. Vite proxies
+`/api` to Python at `127.0.0.1:3000`. Build the UI first and set
+`BAMBU_SPOOLMAN_STATIC` to its absolute `frontend/dist` path to serve it directly
+from a local Python process.
 
-| Method | Browser path | Behavior |
+TanStack Query owns one coherent settings/printer/inventory/features snapshot.
+Successful and failed writes invalidate reads because partial changes may have
+applied; writes are never automatically retried. The dashboard polls every five
+seconds while visible and pauses while a mapping dialog is open. Initial errors
+and background refresh failures expose a retry button; background failures retain
+the last good snapshot. Font assets are bundled locally.
+
+Python owns assignment and RFID rules in `assignments.py` and `rfid.py`.
+Mutations require JSON, enforce a 4 KiB body limit, and reject foreign browser
+origins. The trusted-private-network deployment boundary remains unchanged.
+
+| Method | Path | Behavior |
 | --- | --- | --- |
-| GET | `/api/v1/settings` | Current tray mapping and locks |
-| GET | `/api/v1/spools` | Spoolman inventory, preserving its JSON fields |
-| GET | `/api/v1/spools/<id>` | One spool, or 404 |
-| PUT | `/api/v1/trays/<id>` | JSON `{ "spoolId": 42 }`; `-1` clears; 204 on success |
-
-The Python listener binds only `127.0.0.1:50052` in the existing backend process.
-Next temporarily forwards the supported routes on the existing UI port; no extra
-container, process, published port, or CORS allowance is needed. For separate
-local development processes, set `API_SERVER_URL` on Next (default
-`http://127.0.0.1:50052`). Keep the same trusted-network deployment boundary.
-Mutation requests require JSON, enforce a 4 KiB limit, and reject foreign browser
-origins at the proxy. Application errors are JSON; mutation requests are not
-retried automatically because a timed-out write may already have completed.
-
-Run the production build and `sh scripts/container-smoke-test.sh <image>`.
-The smoke test uses a disposable Spoolman fixture to verify assignment/removal,
-dynamic pages, immediate cache invalidation, duplicate errors, and upstream
-outages, followed by the existing restricted-runtime/restart checks. Backend
-contract tests and frontend HTTP-client tests run in their respective verifier
-stages. These checks do not drive a browser's buttons or a physical printer.
-
-The remaining architecture work is serving static React assets from Python and
-removing production Node, gRPC, protobuf generation, and dual-process supervision.
-The existing best-effort Spoolman location-field synchronization is unchanged;
-explicit partial-failure reporting belongs to the subsequent backend work.
-
-## Printer and RFID HTTP API
-
-All UI calls use HTTP. Printer snapshots and Spoolman feature detection use `/api/v1/printer` and `/api/v1/info`. Linking,
-temporary override, and permanent unlinking use browser JSON requests through
-the same proxy and limits as assignment.
-
-| Method | Browser path | Body |
-| --- | --- | --- |
-| GET | `/api/v1/printer` | None; connection, last update, raw printer snapshot |
-| GET | `/api/v1/info` | None; Spoolman health and feature support |
+| GET | `/api/v1/settings` | Tray mappings and locks |
+| GET | `/api/v1/printer` | Connection and raw printer snapshot |
+| GET | `/api/v1/info` | Spoolman health and tray-locking feature support |
+| GET | `/api/v1/spools` and `/api/v1/spools/<id>` | Raw Spoolman inventory |
+| PUT | `/api/v1/trays/<id>` | `{ "spoolId": 42 }`; `-1` clears |
 | PUT | `/api/v1/spools/<id>/rfid` | `{ "uuid": "<tag>" }` links a nonempty tag |
 | POST | `/api/v1/trays/<id>/rfid/override` | `{ "uuid": "<current tag>" }` pauses automatic mapping |
 | POST | `/api/v1/trays/<id>/rfid/unlink` | `{ "spoolId": 42, "uuid": "<current tag>" }` permanently unlinks |
 
-`bambu_spoolman/rfid.py` owns RFID rules for HTTP and the transitional gRPC
-adapter. Permanent unlink is one server-coordinated operation: check the expected
-assignment, suppress relinking for this insertion, then remove the association.
-A stale assignment returns 409; a missing/currently changed tag is rejected. If
-only part succeeds, the response describes that partial result and retains the
-local override to prevent immediate automatic recreation. Writes are not retried
-automatically. Settings, spool, and printer caches are invalidated even on failed
-mutations because one part may already have applied.
+The UI's HTTP presentation model explicitly converts Spoolman JSON, preserving
+weight defaults, multicolor data, and custom extra-field keys. There is no UI
+code generation. The image retains metadata for the production npm dependency
+closure under `/app/frontend-inventory`, outside the web root, so image scans
+and SBOMs still cover browser libraries without shipping a Node executable.
 
-Upstream feature lookups and RFID synchronization run outside the event loop so
-status polling remains responsive. The automatic switch uses one reentrant lock
-for MQTT synchronization, manual refresh, and override of its shared state.
-This does not provide a transaction across local settings and Spoolman; broader
-mapping concurrency and lifecycle work remains in the backend-refactor stage.
+`sh scripts/container-smoke-test.sh <image>` uses a disposable Spoolman fixture
+and pinned Playwright/Chromium image to exercise actual assignment/removal,
+deep-link reloads, history, themes, paused polling, and outage recovery. It also
+checks API contracts, privileges, read-only filesystems, persistence, restart,
+Python PID 1, absence of Node/internal listeners, and graceful shutdown. Browser
+tool versions are owned by `.github/docker/Dockerfile.browser`; its driver
+version is derived from the same image tag. No live printer is needed.
 
-The frontend has no gRPC or protobuf dependencies or code generation. Its small
-presentation model in `frontend/lib/spool-model.ts` explicitly converts Spoolman's
-HTTP JSON into UI fields, preserving missing-weight defaults, multicolor data,
-and custom extra-field keys. Invalid spool IDs and malformed numeric values
-produce errors rather than silently assigning or displaying a different spool.
-Contract tests cover these conversions and dashboard calculations.
-
-The transitional Python gRPC adapter and Python protobuf generation remain until
-static React assets can be served directly by Python. That migration will remove
-production Node and dual-process supervision. The container smoke test deliberately
-points the old frontend gRPC URL at an unavailable address to verify HTTP independence.
+MQTT retry waits are interruptible during shutdown. Compose allows 45 seconds
+for in-flight upstream requests and HTTP cleanup before forcing termination. The broader ownership of
+accounting tasks, timers, downloads, and concurrent mapping changes remains in
+the next backend-refactor step; this change does not provide a distributed
+transaction across settings and Spoolman.
 
 ## CI checks and vulnerability remediation
 

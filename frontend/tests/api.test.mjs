@@ -71,3 +71,42 @@ test("network failure is surfaced without an automatic retry", async () => {
   });
   assert.equal(fetch.mock.callCount(), 1);
 });
+
+test("successful and partially failed writes invalidate browser reads", async () => {
+  const events = new EventTarget();
+  globalThis.window = events;
+  let changes = 0;
+  events.addEventListener("bambu-spoolman:changed", () => {
+    changes += 1;
+  });
+  try {
+    const fetch = mock.method(
+      globalThis,
+      "fetch",
+      async () => new Response(null, { status: 204 }),
+    );
+    await apiRequest("/trays/0", { method: "PUT" });
+    assert.equal(changes, 1);
+    fetch.mock.mockImplementation(async () =>
+      Response.json({ error: "partially applied" }, { status: 502 }),
+    );
+    await assert.rejects(
+      apiRequest("/trays/0/rfid/unlink", { method: "POST" }),
+      /partially applied/,
+    );
+    assert.equal(changes, 2);
+    fetch.mock.mockImplementation(async () => {
+      throw new Error("network failure");
+    });
+    await assert.rejects(
+      apiRequest("/trays/0", { method: "PUT" }),
+      /network failure/,
+    );
+    assert.equal(changes, 3);
+    fetch.mock.mockImplementation(async () => Response.json({ trays: {} }));
+    await apiRequest("/settings");
+    assert.equal(changes, 3);
+  } finally {
+    delete globalThis.window;
+  }
+});

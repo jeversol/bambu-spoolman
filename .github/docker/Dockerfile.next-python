@@ -17,7 +17,6 @@ COPY . .
 RUN sed -i 's/^requires-python = .*/requires-python = ">=3.14,<4"/' pyproject.toml \
     && rm uv.lock \
     && uv sync \
-    && scripts/update_protos.sh \
     && .venv/bin/python -m unittest discover -s tests \
     && .venv/bin/ruff check . \
     && .venv/bin/ruff format --check .

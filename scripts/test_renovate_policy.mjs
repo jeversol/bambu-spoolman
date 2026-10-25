@@ -102,9 +102,8 @@ await scenario('lockfile maintenance stays weekly, reviewed, and outside age gua
   assert.equal(update.minimumReleaseAge, null);
   assert.deepEqual(update.schedule, ['before 4am on monday']);
 });
-await scenario('Next and React runtime/type updates retain coordinated groups', async () => {
-  for (const [names, expected] of [[['next', 'eslint-config-next'], 'next.js packages'],
-    [['react', 'react-dom', '@types/react', '@types/react-dom'], 'react packages']]) {
+await scenario('React runtime/type updates retain a coordinated group', async () => {
+  for (const [names, expected] of [[['react', 'react-dom', '@types/react', '@types/react-dom'], 'react packages']]) {
     for (const name of names) assert.equal((await effective({ depName: name, packageName: name })).groupName, expected);
   }
 });
@@ -135,13 +134,13 @@ await scenario('prereleases stay in the chosen compatibility minor and out of pr
 await scenario('real GitHub alerts override grouping, schedules, age and automerge at every severity', async () => {
   for (const severity of ['low', 'moderate', 'high', 'critical']) {
     platforms.set('github', { getVulnerabilityAlerts: async () => [{
-      security_vulnerability: { package: { ecosystem: 'npm', name: 'next' },
+      security_vulnerability: { package: { ecosystem: 'npm', name: 'react' },
         first_patched_version: { identifier: '1.0.1' }, severity },
       security_advisory: { identifiers: [], summary: 'Fixture', description: 'Fixture', severity },
     }] });
     setPlatformApi('github');
     const policy = await detectVulnerabilityAlerts(config);
-    const update = await effective({ depName: 'next', packageName: 'next' }, policy);
+    const update = await effective({ depName: 'react', packageName: 'react' }, policy);
     assert.equal(update.isVulnerabilityAlert, true);
     assert.equal(update.vulnerabilityFixVersion, '1.0.1');
     assert.equal(update.minimumReleaseAge, null);

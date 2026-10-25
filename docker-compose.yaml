@@ -2,6 +2,7 @@ services:
   bambu-spoolman:
     image: ghcr.io/jeversol/bambu-spoolman:latest
     restart: unless-stopped
+    stop_grace_period: 45s
     env_file:
       - .env
     read_only: true
@@ -15,7 +16,6 @@ services:
       - no-new-privileges:true
     tmpfs:
       - /tmp:uid=10001,gid=10001,mode=1777
-      - /app/frontend/.next/cache:uid=10001,gid=10001,mode=0700
     volumes:
       - config:${BAMBU_SPOOLMAN_CONFIG:-/config}
     ports:

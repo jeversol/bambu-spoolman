@@ -1,50 +1,21 @@
-import { headers } from "next/headers";
-import { Suspense } from "react";
 import { SpoolMappingDashboard } from "@/components/dashboard/SpoolMappingDashboard";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   type DashboardTray,
   normalizeColorHex,
   toDashboardSpool,
 } from "@/lib/dashboard";
-import { supportsTrayLocking } from "@/lib/features";
-import {
-  getPrinterSettings,
-  getPrinterTray,
-  isPrinterTrayOccupied,
-} from "@/lib/printer";
-import { getSettings } from "@/lib/settings";
-import { getAllSpools } from "@/lib/spool";
+import { getPrinterTray, isPrinterTrayOccupied } from "@/lib/printer";
+import { useApplicationData } from "@/lib/application";
 
 const UNDEFINED_RFID_TAG = "00000000000000000000000000000000";
 
-function SkeletonPage() {
-  return (
-    <div className="space-y-7">
-      <Skeleton className="h-12 w-full rounded-xl" />
-      <div>
-        <Skeleton className="mb-3 h-6 w-20" />
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {["one", "two", "three", "four"].map((key) => (
-            <Skeleton key={key} className="h-80 rounded-2xl" />
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-async function HomePage() {
-  await headers();
-
-  const [settings, printerSettings, rawSpools, rfidEnabled] = await Promise.all(
-    [
-      getSettings(),
-      getPrinterSettings(),
-      getAllSpools(),
-      supportsTrayLocking(),
-    ],
-  );
+export default function Home() {
+  const {
+    settings,
+    printerSettings,
+    spools: rawSpools,
+    rfidEnabled,
+  } = useApplicationData();
   const spools = rawSpools.map(toDashboardSpool);
   const spoolsById = new Map(spools.map((spool) => [spool.id, spool]));
   const assignedTrayIds = Object.keys(settings.trays)
@@ -94,23 +65,15 @@ async function HomePage() {
   );
 
   return (
-    <SpoolMappingDashboard
-      connected={printerSettings !== null}
-      rfidEnabled={rfidEnabled}
-      trays={trays}
-      externalSpool={spoolsById.get(settings.trays[255]) ?? null}
-      spools={spools}
-      assignments={assignments}
-    />
-  );
-}
-
-export default function Home() {
-  return (
     <main className="mx-auto w-full max-w-6xl px-4 pb-16 pt-5">
-      <Suspense fallback={<SkeletonPage />}>
-        <HomePage />
-      </Suspense>
+      <SpoolMappingDashboard
+        connected={printerSettings !== null}
+        rfidEnabled={rfidEnabled}
+        trays={trays}
+        externalSpool={spoolsById.get(settings.trays[255]) ?? null}
+        spools={spools}
+        assignments={assignments}
+      />
     </main>
   );
 }

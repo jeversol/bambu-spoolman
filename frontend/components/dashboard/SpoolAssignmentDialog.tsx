@@ -2,7 +2,6 @@
 
 import { type IDetectedBarcode, Scanner } from "@yudiel/react-qr-scanner";
 import { AlertCircle, ScanLine, Search, X } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import {
   type UpdateTrayAssignmentActionData,
@@ -51,12 +50,11 @@ export function SpoolAssignmentDialog({
   const [qrScanError, setQrScanError] = useState<string | null>(null);
   const [actionState, setActionState] =
     useState<UpdateTrayAssignmentActionData>({ error: null });
-  const [pendingAction, setPendingAction] = useState<
-    "assign" | "clear" | null
-  >(null);
+  const [pendingAction, setPendingAction] = useState<"assign" | "clear" | null>(
+    null,
+  );
   const [isPending, startTransition] = useTransition();
   const cameraAvailable = useCameraAvailable();
-  const router = useRouter();
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -136,7 +134,6 @@ export function SpoolAssignmentDialog({
       if (!result.error) {
         dialogRef.current?.close();
         onClose();
-        router.refresh();
       } else {
         setPendingAction(null);
       }
@@ -152,7 +149,6 @@ export function SpoolAssignmentDialog({
       if (!result.error) {
         dialogRef.current?.close();
         onClose();
-        router.refresh();
       } else {
         setPendingAction(null);
       }

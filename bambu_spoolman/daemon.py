@@ -1,6 +1,8 @@
 import asyncio
 import datetime
 import os
+import platform
+import signal
 
 from dotenv import load_dotenv
 from loguru import logger
@@ -9,7 +11,6 @@ from bambu_spoolman.bambu_mqtt import MqttHandler, stateful_printer_info
 from bambu_spoolman.broker.automatic_spool_switch import AutomaticSpoolSwitch
 from bambu_spoolman.broker.filament_usage_tracker import FilamentUsageTracker
 from bambu_spoolman.build_info import get_build_info
-from bambu_spoolman.grpc.server import serve as run_grpc_server
 from bambu_spoolman.http_api import serve as run_http_server
 
 
@@ -37,10 +38,13 @@ async def async_main():
         automatic_switching,
         os.environ.get("LOGURU_LEVEL", "INFO"),
     )
-    loop = asyncio.get_event_loop()
-    tasks = []
-    tasks.append(loop.create_task(run_grpc_server()))
-    tasks.append(loop.create_task(run_http_server()))
+    logger.info("event=container_runtime python={}", platform.python_version())
+    loop = asyncio.get_running_loop()
+    stopping = asyncio.Event()
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(signum, stopping.set)
+    server = asyncio.create_task(run_http_server())
+    stopped = asyncio.create_task(stopping.wait())
     mqtt = MqttHandler(
         printer_ip,
         printer_serial,
@@ -61,8 +65,26 @@ async def async_main():
 
     mqtt.start()
 
-    await asyncio.gather(*tasks)
-    mqtt.join()
+    try:
+        done, _ = await asyncio.wait(
+            {server, stopped}, return_when=asyncio.FIRST_COMPLETED
+        )
+        if server in done:
+            await server  # Propagate listener/startup failures to the container.
+            raise RuntimeError("HTTP server stopped unexpectedly")
+    finally:
+        logger.info("event=container_shutdown_started")
+        mqtt.stop()
+        server.cancel()
+        stopped.cancel()
+        await asyncio.gather(server, stopped, return_exceptions=True)
+        await asyncio.to_thread(mqtt.join, 6)
+        await asyncio.to_thread(mqtt.message_dispatcher.join, 1)
+        if mqtt.is_alive() or mqtt.message_dispatcher.is_alive():
+            logger.warning("event=mqtt_shutdown_pending_background_work")
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            loop.remove_signal_handler(signum)
+        logger.info("event=container_shutdown_complete")
 
 
 def main():

@@ -7,7 +7,7 @@ runtime_gid=10001
 configuration_directory=${BAMBU_SPOOLMAN_CONFIG:-/config}
 
 if [ "$#" -eq 0 ]; then
-    set -- /app/container-entrypoint.sh
+    set -- /venv/bin/bambu-spoolman-broker
 fi
 
 if [ "$(id -u)" -eq 0 ]; then

@@ -1,20 +1,19 @@
 import { TrayConfigForm } from "@/components/tray-config/TrayConfigForm";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { getSettings, getSpoolInTray, isLocked } from "@/lib/settings";
-import { getAllSpools } from "@/lib/spool";
+import { useApplicationData } from "@/lib/application";
 import { AlertCircle } from "lucide-react";
 
 type Props = {
   trayId: number;
 };
 
-export async function SpoolConfiguration(props: Props) {
-  const spool = await getSpoolInTray(props.trayId);
-  const allSpools = await getAllSpools();
-  const selectedSpools = await getSettings().then((settings) =>
-    Object.values(settings.trays),
-  );
-  if (await isLocked(props.trayId)) {
+export function SpoolConfiguration(props: Props) {
+  const { settings, spools: allSpools } = useApplicationData();
+  const spool =
+    allSpools.find((value) => value.id === settings.trays[props.trayId]) ??
+    null;
+  const selectedSpools = Object.values(settings.trays);
+  if (settings.lockedTrays.includes(props.trayId)) {
     return (
       <Alert>
         <AlertCircle />

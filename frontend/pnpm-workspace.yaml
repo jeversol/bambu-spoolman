@@ -5,7 +5,3 @@ minimumReleaseAge: 0
 engineStrict: true
 
 pmOnFail: ignore
-
-allowBuilds:
-  sharp: false
-  unrs-resolver: false

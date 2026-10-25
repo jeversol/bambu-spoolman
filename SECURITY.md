@@ -7,7 +7,7 @@ network. The web UI allows operators to inspect printer state and modify tray,
 spool, and RFID mappings. Its colocated Python service communicates with the
 printer and Spoolman.
 
-The supported deployment does not expose the web UI or gRPC service directly
+The supported deployment does not expose the web UI or HTTP API directly
 to the Internet. Access from outside the trusted network requires an
 authenticating reverse proxy or equivalent access-control layer.
 
@@ -19,15 +19,14 @@ Printer messages, downloaded print files, dependency registries, and software
 changes are treated as potentially untrusted inputs.
 
 The default web UI has no built-in user authentication. Anyone who can reach
-it can perform its supported state-changing operations. The internal gRPC
-service is intended only for the colocated frontend and must not be published
-or otherwise made reachable from an untrusted network.
+it can perform its supported state-changing operations. Python serves both the
+UI and API on port 3000; no internal gRPC listener remains.
 
 ## Security Invariants
 
 - Printer credentials must not be exposed through source, images, logs, or
   browser responses.
-- The web and gRPC interfaces must remain within the trusted deployment
+- The web and HTTP API interfaces must remain within the trusted deployment
   boundary unless an external authentication layer protects them.
 - Untrusted printer data and print files must not grant filesystem or process
   execution capabilities or consume unbounded resources.
@@ -56,8 +55,7 @@ are reportable.
 Built-in UI authentication is intentionally absent for the supported personal,
 trusted-network deployment. Network isolation is the compensating control.
 Operators are responsible for firewall rules, VLAN or equivalent network
-segmentation, reverse-proxy configuration, and ensuring that container port
-50051 is not published.
+segmentation, reverse-proxy configuration, and exposing only the intended container port 3000 within the trusted network.
 
 Compromise of an already trusted operator or trusted internal host is outside
 the authentication boundary unless it provides an additional privilege or

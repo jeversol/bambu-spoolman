@@ -5,69 +5,26 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { notFound } from "next/navigation";
-import { Suspense } from "react";
+import { useParams, Link } from "react-router";
+import { useApplicationData } from "@/lib/application";
+import { NotFound } from "@/components/NotFound";
 import { CurrentSpool } from "../../../../../components/tray-config/CurrentSpool";
-import { SpoolConfiguration } from "./SpoolConfiguration";
+import { SpoolConfiguration } from "@/components/tray-config/SpoolConfiguration";
 import { Button } from "@/components/ui/button";
-import Link from "next/link";
-import { Skeleton } from "@/components/ui/skeleton";
-import { getRfidTag } from "@/lib/printer";
-import { getSpoolInTray, isLocked } from "@/lib/settings";
-import { RfidLinkButton } from "./RfidLinkButton";
-import { supportsTrayLocking } from "@/lib/features";
-
-type Props = PageProps<"/ams/[amsId]/tray/[trayId]">;
-
-function SkeletonPage() {
-  return (
-    <>
-      <Breadcrumb>
-        <BreadcrumbList>
-          <BreadcrumbItem>Home</BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <Skeleton className="w-20 h-5" />
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <Skeleton className="w-20 h-5" />
-          </BreadcrumbItem>
-        </BreadcrumbList>
-      </Breadcrumb>
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>Current Spool</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Skeleton className="w-full h-24" />
-        </CardContent>
-      </Card>
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>Select Spool</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Skeleton className="w-full h-48" />
-          <Button variant="outline" className="mt-4 float-left" asChild>
-            <Link href="/">Back</Link>
-          </Button>
-        </CardContent>
-      </Card>
-    </>
-  );
-}
+import { getPrinterTray } from "@/lib/printer";
+import { RfidLinkButton } from "@/components/tray-config/RfidLinkButton";
 
 type RfidProps = {
   trayId: number;
 };
 
-async function RfidSettings({ trayId }: RfidProps) {
-  const rfidTag = await getRfidTag(trayId);
-  const locked = await isLocked(trayId);
-  const spool = await getSpoolInTray(trayId);
+function RfidSettings({ trayId }: RfidProps) {
+  const { settings, printerSettings, spools } = useApplicationData();
+  const rfidTag = getPrinterTray(printerSettings, trayId)?.tray_uuid;
+  const locked = settings.lockedTrays.includes(trayId);
+  const spool = spools.find((value) => value.id === settings.trays[trayId]);
 
-  if (!rfidTag || locked || !spool) {
+  if (!rfidTag || /^0+$/.test(rfidTag) || locked || !spool) {
     return null;
   }
 
@@ -91,27 +48,26 @@ async function RfidSettings({ trayId }: RfidProps) {
   );
 }
 
-async function TrayPage(props: Props) {
-  const params = await props.params;
+export default function TrayPage() {
+  const params = useParams();
+  const { rfidEnabled: trayLockingSupported } = useApplicationData();
   const amsId = Number(params.amsId) - 1;
   const rawTrayId = Number(params.trayId) - 1; // Convert to 0-indexed
 
   const trayId = amsId * 4 + rawTrayId;
 
   if (
-    !Number.isInteger(amsId) ||
+    !Number.isSafeInteger(amsId) ||
     !Number.isInteger(rawTrayId) ||
     amsId < 0 ||
     rawTrayId < 0 ||
     rawTrayId > 3
   ) {
-    notFound();
+    return <NotFound />;
   }
 
-  const trayLockingSupported = await supportsTrayLocking();
-
   return (
-    <>
+    <div className="container mx-auto p-4 max-w-2xl">
       <Breadcrumb>
         <BreadcrumbList>
           <BreadcrumbItem>Home</BreadcrumbItem>
@@ -137,20 +93,10 @@ async function TrayPage(props: Props) {
         <CardContent>
           <SpoolConfiguration trayId={trayId} />
           <Button variant="outline" className="mt-4 float-left" asChild>
-            <Link href="/">Back</Link>
+            <Link to="/">Back</Link>
           </Button>
         </CardContent>
       </Card>
-    </>
-  );
-}
-
-export default async function TrayPageOuter(props: Props) {
-  return (
-    <div className="container mx-auto p-4 max-w-2xl">
-      <Suspense fallback={<SkeletonPage />}>
-        <TrayPage {...props} />
-      </Suspense>
     </div>
   );
 }
