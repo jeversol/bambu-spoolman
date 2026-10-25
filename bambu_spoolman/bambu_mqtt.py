@@ -1,5 +1,6 @@
 import copy
 import json
+import os
 import queue
 import ssl
 import threading
@@ -9,7 +10,7 @@ from typing import Callable
 import paho.mqtt.client as mqtt
 from loguru import logger
 
-from bambu_spoolman.settings import edit_settings
+from bambu_spoolman.settings import edit_settings, load_settings
 
 
 def recursive_merge(dict1, dict2):
@@ -266,19 +267,52 @@ def _tray_bit_is_set(bits, unit_id, tray_id):
 MAX_BACKOFF_DURATION = 60
 
 
+DISPATCH_FAULT_KEY = "mqtt_dispatch_fault"
+
+
+def require_dispatch_reconciliation():
+    settings = load_settings()
+    if DISPATCH_FAULT_KEY in settings:
+        fault = settings[DISPATCH_FAULT_KEY]
+        raise RuntimeError(
+            "MQTT dispatch fault requires reconciliation before restart: "
+            f"{fault}. See CONTRIBUTING.md MQTT overload recovery."
+        )
+
+
+def _positive_limit(name, default):
+    value = int(os.environ.get(f"BAMBU_SPOOLMAN_MQTT_{name}", default))
+    if value <= 0:
+        raise ValueError(f"BAMBU_SPOOLMAN_MQTT_{name} must be positive")
+    return value
+
+
 class MqttHandler(threading.Thread):
     def __init__(self, printer_ip, printer_serial, printer_access_code):
         self.printer_ip = printer_ip
         self.printer_serial = printer_serial
         self.printer_access_code = printer_access_code
         self.connected = False
+        self.failure = None
+        self._failure_lock = threading.Lock()
+        self.max_payload_bytes = _positive_limit("MAX_PAYLOAD_BYTES", 256 * 1024)
+        self.max_queued_bytes = _positive_limit("MAX_QUEUED_BYTES", 16 * 1024 * 1024)
+        max_queued_messages = _positive_limit("MAX_QUEUED_MESSAGES", 1024)
+        self.max_pending_messages = _positive_limit("MAX_PENDING_MESSAGES", 32)
+        self._queued_bytes = 0
+        self._queue_lock = threading.Lock()
         self._shutdown_requested = threading.Event()
         self.pending_messages = []
         self.pending_messages_lock = threading.Lock()
 
         self.client = self._create_client()
-        self.callbacks = {"on_connect": [], "on_message": [], "on_disconnect": []}
-        self.message_queue = queue.Queue()
+        self.callbacks = {
+            "on_connect": [],
+            "on_message": [],
+            "on_disconnect": [],
+            "on_failure": [],
+        }
+        self.message_queue = queue.Queue(maxsize=max_queued_messages)
         self.message_dispatcher = threading.Thread(
             target=self._dispatch_messages,
             daemon=True,
@@ -293,6 +327,14 @@ class MqttHandler(threading.Thread):
 
     def run(self):
         self.message_dispatcher.start()
+        logger.info(
+            "event=mqtt_dispatch_limits queued_messages={} queued_bytes={} "
+            "payload_bytes={} pending_publishes={}",
+            self.message_queue.maxsize,
+            self.max_queued_bytes,
+            self.max_payload_bytes,
+            self.max_pending_messages,
+        )
         logger.info(
             "event=mqtt_dispatcher_started printer_serial={}", self.printer_serial
         )
@@ -348,7 +390,33 @@ class MqttHandler(threading.Thread):
     def stop(self):
         self._shutdown_requested.set()
         self.client.disconnect()
-        self.message_queue.put(None)
+
+    def add_on_failure_callback(self, callback):
+        self.callbacks["on_failure"].append(callback)
+
+    def _fail_dispatch(self, reason):
+        with self._failure_lock:
+            if self.failure is not None:
+                return
+            self.failure = reason
+            self._shutdown_requested.set()
+        logger.critical(
+            "event=mqtt_dispatch_fault reason={} action=reconcile_before_restart",
+            reason,
+        )
+        for callback in self.callbacks["on_failure"]:
+            self._run_callback("on_failure", callback, self)
+        try:
+            with edit_settings() as settings:
+                settings[DISPATCH_FAULT_KEY] = {
+                    "reason": reason,
+                    "timestamp": int(time.time()),
+                    "printer_serial": self.printer_serial,
+                }
+        except Exception:
+            logger.exception("event=mqtt_dispatch_fault_persistence_failed")
+        finally:
+            self.client.disconnect()
 
     def add_callback(self, callback: Callable[["MqttHandler", dict], None]):
         self.callbacks["on_message"].append(callback)
@@ -360,6 +428,8 @@ class MqttHandler(threading.Thread):
         self.callbacks["on_disconnect"].append(callback)
 
     def _on_connect(self, client, userdata, flags, rc):
+        if self._shutdown_requested.is_set():
+            return
         logger.info(
             "event=mqtt_connected printer_serial={} result_code={}",
             self.printer_serial,
@@ -380,6 +450,12 @@ class MqttHandler(threading.Thread):
         self.backoff = None
 
     def _on_message(self, client, userdata, msg):
+        if self._shutdown_requested.is_set():
+            return
+        payload_bytes = len(msg.payload)
+        if payload_bytes > self.max_payload_bytes:
+            self._fail_dispatch("payload byte limit exceeded")
+            return
         logger.trace("MQTT topic={} payload={}", msg.topic, msg.payload)
         try:
             message = json.loads(msg.payload)
@@ -397,6 +473,9 @@ class MqttHandler(threading.Thread):
         # longer than the MQTT keepalive. Dispatch them in order off the Paho
         # network thread so status processing cannot disconnect the printer.
         print_obj = message.get("print", {})
+        if not isinstance(print_obj, dict):
+            logger.error("Ignoring MQTT message with non-object print field")
+            return
         logger.debug(
             "event=mqtt_message_received topic={} command={} state={} layer={} "
             "task_id={}",
@@ -406,7 +485,22 @@ class MqttHandler(threading.Thread):
             print_obj.get("layer_num"),
             print_obj.get("task_id"),
         )
-        self.message_queue.put(message)
+        overflow = False
+        with self._queue_lock:
+            if self._shutdown_requested.is_set():
+                return
+            if self._queued_bytes + payload_bytes > self.max_queued_bytes:
+                overflow = True
+            else:
+                try:
+                    self.message_queue.put_nowait((message, payload_bytes))
+                except queue.Full:
+                    overflow = True
+                else:
+                    self._queued_bytes += payload_bytes
+        if overflow:
+            self._fail_dispatch("queued message or byte limit exceeded")
+            return
         queue_depth = self.message_queue.qsize()
         if queue_depth >= 10 and queue_depth % 10 == 0:
             logger.warning(
@@ -416,14 +510,18 @@ class MqttHandler(threading.Thread):
             )
 
     def _dispatch_messages(self):
-        while True:
-            message = self.message_queue.get()
-            if message is None:
-                self.message_queue.task_done()
-                return
+        while not self._shutdown_requested.is_set():
+            try:
+                message, payload_bytes = self.message_queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            with self._queue_lock:
+                self._queued_bytes -= payload_bytes
             started_at = time.monotonic()
             try:
                 for callback in self.callbacks["on_message"]:
+                    if self._shutdown_requested.is_set():
+                        break
                     self._run_callback("on_message", callback, self, message)
             finally:
                 duration = time.monotonic() - started_at
@@ -456,18 +554,44 @@ class MqttHandler(threading.Thread):
             self._run_callback("on_disconnect", callback, self)
 
     def publish(self, message, wait=False):
-        with self.pending_messages_lock:
-            if not self.connected:
-                self.pending_messages.append(message)
-                logger.info(
-                    "event=mqtt_publish_queued printer_serial={} queued_messages={}",
-                    self.printer_serial,
-                    len(self.pending_messages),
-                )
-                return
-
+        if self._shutdown_requested.is_set():
+            return
+        snapshot_request = (
+            isinstance(message, dict)
+            and set(message) == {"pushing"}
+            and isinstance(message["pushing"], dict)
+            and message["pushing"].get("command") == "pushall"
+        )
         if isinstance(message, dict):
             message = json.dumps(message)
+        if (
+            len(message.encode() if isinstance(message, str) else message)
+            > self.max_payload_bytes
+        ):
+            self._fail_dispatch("outbound payload byte limit exceeded")
+            return
+        overflow = False
+        with self.pending_messages_lock:
+            if not self.connected:
+                # Snapshot requests are idempotent. Retain one identical request
+                # instead of growing a disconnected queue on repeated solicits.
+                if snapshot_request and message in self.pending_messages:
+                    return
+                if len(self.pending_messages) >= self.max_pending_messages:
+                    overflow = True
+                else:
+                    self.pending_messages.append(message)
+                    logger.info(
+                        "event=mqtt_publish_queued printer_serial={} "
+                        "queued_messages={}",
+                        self.printer_serial,
+                        len(self.pending_messages),
+                    )
+                    return
+        if overflow:
+            self._fail_dispatch("outbound pending message limit exceeded")
+            return
+
         result = self.client.publish(f"device/{self.printer_serial}/request", message)
         logger.debug(
             "event=mqtt_message_published printer_serial={} bytes={} wait={}",

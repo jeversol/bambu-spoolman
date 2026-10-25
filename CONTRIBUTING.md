@@ -243,6 +243,62 @@ prints. Time is checked between chunks/lines; an individual blocking network rea
 still uses the existing socket/request timeout. These budgets bound accepted work;
 they do not impose a process-level memory quota or interrupt a blocked system call.
 
+## API write admission
+
+API mapping writes have one active mutation and at most eight waiting requests
+per application instance. Waiters do not occupy executor threads. Excess writes
+receive JSON HTTP 503 with `Retry-After: 1`; refresh the mapping before retrying
+rather than automatically replaying a write. Cancellation drops queued work but
+an already-started mutation retains admission until its worker completes, since
+cancelling an async wait cannot stop a synchronous network operation. Shutdown
+rejects queued/new writes and allows five seconds for the active mutation to
+drain, logging pending work explicitly. MQTT mapping serialization remains in
+force; this API admission bound does not bound the MQTT message backlog.
+
+### MQTT overload recovery
+
+MQTT dispatch retains FIFO order and is bounded by both message count and raw
+payload bytes. Defaults are 1024 queued messages, 16 MiB of queued payloads, and
+256 KiB per message. The active message is outside the queued budget; decoded
+JSON has additional memory overhead. These are application queue bounds, not a
+limit on the MQTT library's initial packet allocation. Environment overrides
+are positive integers:
+
+- `BAMBU_SPOOLMAN_MQTT_MAX_QUEUED_MESSAGES`
+- `BAMBU_SPOOLMAN_MQTT_MAX_QUEUED_BYTES`
+- `BAMBU_SPOOLMAN_MQTT_MAX_PAYLOAD_BYTES`
+- `BAMBU_SPOOLMAN_MQTT_MAX_PENDING_MESSAGES` (default 32 disconnected publishes)
+
+Disconnected identical snapshot requests are deduplicated. Other requests
+remain ordered within the pending limit. Reconnect flushes accepted requests.
+The network callback never waits for dispatch capacity. If an inbound or
+outbound limit is exceeded, the handler logs `event=mqtt_dispatch_fault`, stops
+accepting/dispatching messages, stops the tracker and exits the service with an
+error. An already-running operation can finish. Remaining queued messages are
+not replayed: status deltas can contain accounting and tray transitions, so
+silently dropping/coalescing them and carrying on would produce unreliable
+usage. A new full printer snapshot cannot reconstruct the missing history.
+
+The fault is saved as `mqtt_dispatch_fault` in the configured `settings.json`;
+startup refuses to resume while this key is present. Automatic container
+restart does not acknowledge the gap. If persistence itself fails, a separate
+`mqtt_dispatch_fault_persistence_failed` error is logged; preserve logs and keep
+the service stopped for reconciliation.
+
+To recover, stop the container and preserve its logs, settings and checkpoint
+directory. Determine the affected print, spool usage and physical tray mappings
+from the checkpoint, printer and Spoolman; reconcile them before resuming.
+For an ambiguous pending consumption intent, establish whether Spoolman applied
+the request from independent evidence before changing either its totals or the
+checkpoint. Aggregate totals alone are insufficient when another writer also
+changed the spool. If that cannot be established, retain the fault and checkpoint
+and resolve the ambiguity manually; restarting is not a reconciliation tool. Correct the slow upstream/model
+operation or adjust queue limits for the deployment. With the container still
+stopped, remove only the `mqtt_dispatch_fault` key from `settings.json` after
+reconciliation, retaining other settings and checkpoint data, then restart.
+Do not delete the checkpoint simply to clear this fault. This is an explicit
+operator acknowledgment, not an automatic retry policy.
+
 ## CI checks and vulnerability remediation
 
 The required `verify` result aggregates backend tests, frontend checks, the
@@ -369,13 +425,3 @@ gh pr create --base main --fill
 
 Then ask for help resetting the local `main` branch if needed; the commit is
 safe on the new branch.
-
-API mapping writes have one active mutation and at most eight waiting requests
-per application instance. Waiters do not occupy executor threads. Excess writes
-receive JSON HTTP 503 with `Retry-After: 1`; refresh the mapping before retrying
-rather than automatically replaying a write. Cancellation drops queued work but
-an already-started mutation retains admission until its worker completes, since
-cancelling an async wait cannot stop a synchronous network operation. Shutdown
-rejects queued/new writes and allows five seconds for the active mutation to
-drain, logging pending work explicitly. MQTT mapping serialization remains in
-force; this API admission bound does not bound the MQTT message backlog.
