@@ -20,6 +20,11 @@ def probe(expected_spool):
     with grpc.insecure_channel("127.0.0.1:50051") as channel:
         settings = BambuSpoolmanStub(channel).GetSettings(Empty(), timeout=2)
         assert settings.trays["0"] == expected_spool, settings
+    with urllib.request.urlopen(
+        f"http://{os.environ['HOSTNAME']}:3000/api/v1/settings", timeout=2
+    ) as response:
+        assert json.load(response)["trays"]["0"] == expected_spool
+        assert response.headers["Cache-Control"] == "no-store"
     assert os.stat("/proc/1").st_uid == 10001
     assert os.statvfs("/app").f_flag & os.ST_RDONLY
     with open("/proc/1/status") as status_file:

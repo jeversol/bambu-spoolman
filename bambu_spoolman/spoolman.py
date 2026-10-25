@@ -135,8 +135,10 @@ class SpoolmanClient:
             )
             response.raise_for_status()
             return response.json()
-        except requests.exceptions.HTTPError:
-            return None
+        except requests.exceptions.HTTPError as error:
+            if error.response is not None and error.response.status_code == 404:
+                return None
+            raise
 
     def supports_native_tags(self):
         """Return whether the connected Spoolman has the v0.27 tag API."""

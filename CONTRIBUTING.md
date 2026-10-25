@@ -83,6 +83,51 @@ include prereleases. Production Python promotion remains a separate reviewed cha
 References: [Renovate release age](https://docs.renovatebot.com/key-concepts/minimum-release-age/)
 and [configuration options](https://docs.renovatebot.com/configuration-options/).
 
+## Application consolidation: assignment flow
+
+The first migration slice moves spool assignment from internal gRPC calls to a
+Python HTTP API. React components and both assignment dialogs remain in place.
+The dashboard, external-holder page, and individual tray pages read settings and
+inventory through HTTP; assigning and clearing use browser JSON requests.
+Successful mutations invalidate the settings cache immediately before refreshing
+the page. Dashboard polling continues on its existing interval.
+
+Python owns the assignment rules in `bambu_spoolman/assignments.py`. The new HTTP
+handler and transitional gRPC handler both call that service, so locked trays,
+duplicate assignments, persistence, and Spoolman synchronization have one owner.
+Spoolman 404 means a missing spool; upstream authorization/server/network errors
+remain errors instead of appearing as a deleted spool.
+
+| Method | Browser path | Behavior |
+| --- | --- | --- |
+| GET | `/api/v1/settings` | Current tray mapping and locks |
+| GET | `/api/v1/spools` | Spoolman inventory, preserving its JSON fields |
+| GET | `/api/v1/spools/<id>` | One spool, or 404 |
+| PUT | `/api/v1/trays/<id>` | JSON `{ "spoolId": 42 }`; `-1` clears; 204 on success |
+
+The Python listener binds only `127.0.0.1:50052` in the existing backend process.
+Next temporarily forwards the supported routes on the existing UI port; no extra
+container, process, published port, or CORS allowance is needed. For separate
+local development processes, set `API_SERVER_URL` on Next (default
+`http://127.0.0.1:50052`). Keep the same trusted-network deployment boundary.
+Mutation requests require JSON, enforce a 4 KiB limit, and reject foreign browser
+origins at the proxy. Application errors are JSON; mutation requests are not
+retried automatically because a timed-out write may already have completed.
+
+Run the production build and `sh scripts/container-smoke-test.sh <image>`.
+The smoke test uses a disposable Spoolman fixture to verify assignment/removal,
+dynamic pages, immediate cache invalidation, duplicate errors, and upstream
+outages, followed by the existing restricted-runtime/restart checks. Backend
+contract tests and frontend HTTP-client tests run in their respective verifier
+stages. These checks do not drive a browser's buttons or a physical printer.
+
+This is the first slice of the architecture plan. Printer status, RFID operations,
+and their generated UI types still use the transitional gRPC/Next setup. Migrate
+those after assignment parity, then serve static React assets from Python and
+remove production Node, gRPC, protobuf generation, and dual-process supervision.
+The existing best-effort Spoolman location-field synchronization is unchanged;
+explicit partial-failure reporting belongs to the subsequent backend work.
+
 ## CI checks and vulnerability remediation
 
 The required `verify` result aggregates backend tests, frontend checks, the

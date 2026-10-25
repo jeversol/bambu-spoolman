@@ -95,6 +95,7 @@ RUN cd /app/frontend && pnpm proto-generate && pnpm build
 FROM frontend_builder AS frontend_verifier
 
 RUN cd /app/frontend \
+    && pnpm test \
     && pnpm lint \
     && touch /tmp/frontend-verified
 

@@ -34,7 +34,7 @@ container_id=$(docker run --detach \
     --env PRINTER_IP=127.0.0.1 \
     --env PRINTER_SERIAL=container-smoke-test \
     --env PRINTER_ACCESS_CODE=unused \
-    --env SPOOLMAN_URL=http://127.0.0.1:1 \
+    --env SPOOLMAN_URL=http://127.0.0.1:50053 \
     "$image")
 
 probe() {
@@ -71,6 +71,8 @@ stop_gracefully() {
 }
 
 wait_ready 42
+docker exec --interactive --user 10001:10001 "$container_id" \
+    /venv/bin/python - < "$repository_root/scripts/assignment_smoke_probe.py"
 docker exec --interactive --user 10001:10001 "$container_id" /venv/bin/python - <<'PY'
 from bambu_spoolman.settings import edit_settings
 with edit_settings() as settings:

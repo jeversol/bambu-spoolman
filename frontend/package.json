@@ -11,6 +11,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
     "proto-generate": "protoc --plugin=./node_modules/.bin/protoc-gen-ts_proto --ts_proto_out=lib/proto --ts_proto_opt=outputServices=nice-grpc,outputServices=generic-definitions,useExactTypes=false -I ../proto $(find ../proto -name \"*.proto\" -type f)"
   },
   "dependencies": {

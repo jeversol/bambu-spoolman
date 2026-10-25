@@ -1,7 +1,8 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { clearSpool } from "./actions";
+import { updateTrayAssignment } from "@/components/tray-config/actions";
+import { Alert } from "@/components/ui/alert";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -12,27 +13,34 @@ type Props = {
 
 export function ClearButton({ trayId, locked }: Props) {
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const router = useRouter();
   const handleClear = async () => {
     setLoading(true);
     try {
-      await clearSpool(trayId);
-      router.refresh();
+      const result = await updateTrayAssignment(trayId, -1);
+      setError(result.error);
+      if (!result.error) router.refresh();
     } catch (error) {
-      console.error("Failed to clear spool:", error);
+      setError(
+        error instanceof Error ? error.message : "Could not remove spool",
+      );
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <Button
-      variant="outline"
-      disabled={locked || loading}
-      className="ml-auto"
-      onClick={handleClear}
-    >
-      Remove Spool
-    </Button>
+    <>
+      {error && <Alert variant="destructive">{error}</Alert>}
+      <Button
+        variant="outline"
+        disabled={locked || loading}
+        className="ml-auto"
+        onClick={handleClear}
+      >
+        Remove Spool
+      </Button>
+    </>
   );
 }
