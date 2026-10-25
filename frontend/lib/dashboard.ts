@@ -1,4 +1,4 @@
-import type { Spool } from "@/lib/proto/bambu_spoolman/grpc/spoolman";
+import type { Spool } from "@/lib/spool-model";
 
 export type DashboardSpool = {
   id: number;

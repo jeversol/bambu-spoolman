@@ -11,7 +11,7 @@ import {
   useTransition,
 } from "react";
 import { useCameraAvailable } from "@/lib/hooks/useCameraAvailable";
-import type { Spool } from "@/lib/proto/bambu_spoolman/grpc/spoolman";
+import type { Spool } from "@/lib/spool-model";
 import { getSpoolIdFromQrValue } from "@/lib/qr";
 import { Alert } from "../ui/alert";
 import { Button, ButtonLoading } from "../ui/button";

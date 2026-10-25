@@ -3,7 +3,7 @@ import {
   RadioGroupItem,
   type RadioGroupProps,
 } from "@/components/ui/radio-group";
-import type { Spool } from "@/lib/proto/bambu_spoolman/grpc/spoolman";
+import type { Spool } from "@/lib/spool-model";
 import { SpoolChip } from "../SpoolChip";
 import { Label } from "../ui/label";
 

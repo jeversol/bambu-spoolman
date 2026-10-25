@@ -10,9 +10,9 @@ Node 24, enforced by `engines.node` and pnpm's `engineStrict` setting.
 | Component | Version source | Automated updates |
 | --- | --- | --- |
 | Python and Alpine | Version-and-digest-pinned `python_base` in `Dockerfile` | Renovate Dockerfile manager; Python 3.14 and Alpine 3.24 promotions are manual |
-| Node, npm, protoc, su-exec, libuuid | `apk add` specifications in `Dockerfile` | Renovate APK datasource, scoped to Alpine 3.24 repositories |
+| Node, npm, su-exec, libuuid | `apk add` specifications in `Dockerfile` | Renovate APK datasource, scoped to Alpine 3.24 repositories |
 | pnpm | `frontend/package.json` `packageManager` | Renovate npm manager; shared toolchain reads this value |
-| Frontend libraries, ts-proto, TypeScript | `frontend/package.json` and `pnpm-lock.yaml` | Renovate npm manager and lockfile maintenance |
+| Frontend libraries, TypeScript | `frontend/package.json` and `pnpm-lock.yaml` | Renovate npm manager and lockfile maintenance |
 | Python libraries, grpcio-tools, Ruff | `pyproject.toml` and `uv.lock` | Renovate Python managers and lockfile maintenance |
 | Python wheel build backend | `pyproject.toml` `build-system.requires` | Renovate Python manager |
 | uv | Pinned image references in both Dockerfiles | Renovate Dockerfile manager |
@@ -154,12 +154,17 @@ for MQTT synchronization, manual refresh, and override of its shared state.
 This does not provide a transaction across local settings and Spoolman; broader
 mapping concurrency and lifecycle work remains in the backend-refactor stage.
 
-The frontend no longer has a gRPC client or transport dependencies. TypeScript
-protobuf generation emits data models only during this transition. The old
-backend adapter and generated UI presentation types remain until static React
-assets can be served directly by Python, at which point Node, gRPC, and protobuf
-build steps can be removed together. The container smoke test deliberately points
-the old frontend gRPC URL at an unavailable address to verify HTTP independence.
+The frontend has no gRPC or protobuf dependencies or code generation. Its small
+presentation model in `frontend/lib/spool-model.ts` explicitly converts Spoolman's
+HTTP JSON into UI fields, preserving missing-weight defaults, multicolor data,
+and custom extra-field keys. Invalid spool IDs and malformed numeric values
+produce errors rather than silently assigning or displaying a different spool.
+Contract tests cover these conversions and dashboard calculations.
+
+The transitional Python gRPC adapter and Python protobuf generation remain until
+static React assets can be served directly by Python. That migration will remove
+production Node and dual-process supervision. The container smoke test deliberately
+points the old frontend gRPC URL at an unavailable address to verify HTTP independence.
 
 ## CI checks and vulnerability remediation
 

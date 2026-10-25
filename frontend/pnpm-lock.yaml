@@ -8,9 +8,6 @@ importers:
 
   .:
     dependencies:
-      '@bufbuild/protobuf':
-        specifier: ^2.14.0
-        version: 2.16.0
       '@swc/helpers':
         specifier: 0.5.23
         version: 0.5.23
@@ -63,9 +60,6 @@ importers:
       tailwindcss:
         specifier: ^4.3.3
         version: 4.3.3
-      ts-proto:
-        specifier: ^2.12.0
-        version: 2.18.3
       tw-animate-css:
         specifier: ^1.4.0
         version: 1.4.0
@@ -145,9 +139,6 @@ packages:
   '@babel/types@7.29.8':
     resolution: {integrity: sha512-Vj1jF3cPfxg7OAfoI7QnVKLoILlm2JF9pnVHrX8qx7AHMiYWT+NDAA7jChlNgRS4WTLc/fD1lXLmPixluj+3Gg==}
     engines: {node: '>=6.9.0'}
-
-  '@bufbuild/protobuf@2.16.0':
-    resolution: {integrity: sha512-FWa0sPlqYGJgpTs6OxBRcL/AW4JT0OIO+W1ajerluoTVh8CV0B7XM1qsNCRgnkSCkRCgOICKHRQlY17jrsm0+Q==}
 
   '@cacheable/memory@2.2.0':
     resolution: {integrity: sha512-CTLKqLItRCEixEAewD3/j9DB3/o96gpTPD4eJ1v+DGOlxZRZncRQkGYqqnAGCscYd6RNeXfGeiuCphsPtqyIfQ==}
@@ -1634,10 +1625,6 @@ packages:
   caniuse-lite@1.0.30001816:
     resolution: {integrity: sha512-+8Yx7BXCoqk6IF8yTicjfUR6D/ldJzdlsodlEOiOSPmhK844WIgk67/zIQaGAOxNkZyyvBlrRFnLvqKIoqbAFw==}
 
-  case-anything@2.1.13:
-    resolution: {integrity: sha512-zlOQ80VrQ2Ue+ymH5OuM/DlDq64mEm+B9UTdHULv5osUMD6HalNTblf2b1u/m6QecjsnOkBpqVZ+XPwIVsy7Ng==}
-    engines: {node: '>=12.13'}
-
   class-variance-authority@0.7.1:
     resolution: {integrity: sha512-Ka+9Trutv7G8M6WT6SeiRWz792K5qEqIGEGzXKhAE6xOWAY6pPH8U+9IY3oCMv6kqTmLsv7Xh/2w2RigkePMsg==}
 
@@ -1704,11 +1691,6 @@ packages:
     resolution: {integrity: sha512-8QmQKqEASLd5nx0U1B1okLElbUuuttJ/AnYmRXbbbGDWh6uS208EjD4Xqq/I9wK7u0v6O08XhTWnt5XtEbR6Dg==}
     engines: {node: '>= 0.4'}
 
-  detect-libc@1.0.3:
-    resolution: {integrity: sha512-pGjwhsmsp4kL2RTz08wcOlGN83otlqHeD/Z5T8GXZB+/YcpQ/dgo+lbU8ZsGxV0HIvqqxo9l7mqYwyYMD9bKDg==}
-    engines: {node: '>=0.10'}
-    hasBin: true
-
   detect-libc@2.1.2:
     resolution: {integrity: sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==}
     engines: {node: '>=8'}
@@ -1719,9 +1701,6 @@ packages:
   doctrine@2.1.0:
     resolution: {integrity: sha512-35mSku4ZXK0vfCuHEDAwt55dg2jNajHZ1odvF+8SSr82EsZY4QmXfuWso8oEd8zRhVObSN18aM0CjSdoBX7zIw==}
     engines: {node: '>=0.10.0'}
-
-  dprint-node@1.0.8:
-    resolution: {integrity: sha512-iVKnUtYfGrYcW1ZAlfR/F59cUVL8QIhWoBJoSjkkdua/dkWIgjZfiLMeTjiB06X0ZLkQ0M2C1VbUj/CxkIf1zg==}
 
   dunder-proto@1.0.1:
     resolution: {integrity: sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==}
@@ -2717,16 +2696,6 @@ packages:
     peerDependencies:
       typescript: '>=4.8.4'
 
-  ts-poet@6.12.0:
-    resolution: {integrity: sha512-xo+iRNMWqyvXpFTaOAvLPA5QAWO6TZrSUs5s4Odaya3epqofBu/fMLHEWl8jPmjhA0s9sgj9sNvF1BmaQlmQkA==}
-
-  ts-proto-descriptors@2.1.0:
-    resolution: {integrity: sha512-S5EZYEQ6L9KLFfjSRpZWDIXDV/W7tAj8uW7pLsihIxyr62EAVSiKuVPwE8iWnr849Bqa53enex1jhDUcpgquzA==}
-
-  ts-proto@2.18.3:
-    resolution: {integrity: sha512-Dgfmhf8ltdQZwWPGX0f+XdIprdbAA7iRFsjj4PCflDXP8WTtKZGCjm92/pUlRcHuQy8WGtwbvNh8sthwtdvzBw==}
-    hasBin: true
-
   tsconfig-paths@3.15.0:
     resolution: {integrity: sha512-2Ac2RgzDe/cn48GvOe3M+o82pEFewD3UPbyoUHHdKasHwJKjds4fLXWf/Ux5kATBKN20oaFGu+jbElp1pos0mg==}
 
@@ -2964,8 +2933,6 @@ snapshots:
     dependencies:
       '@babel/helper-string-parser': 7.29.7
       '@babel/helper-validator-identifier': 7.29.7
-
-  '@bufbuild/protobuf@2.16.0': {}
 
   '@cacheable/memory@2.2.0':
     dependencies:
@@ -4442,8 +4409,6 @@ snapshots:
 
   caniuse-lite@1.0.30001816: {}
 
-  case-anything@2.1.13: {}
-
   class-variance-authority@0.7.1:
     dependencies:
       clsx: 2.1.1
@@ -4506,8 +4471,6 @@ snapshots:
       has-property-descriptors: 1.0.2
       object-keys: 1.1.1
 
-  detect-libc@1.0.3: {}
-
   detect-libc@2.1.2: {}
 
   detect-node-es@1.1.0: {}
@@ -4515,10 +4478,6 @@ snapshots:
   doctrine@2.1.0:
     dependencies:
       esutils: 2.0.3
-
-  dprint-node@1.0.8:
-    dependencies:
-      detect-libc: 1.0.3
 
   dunder-proto@1.0.1:
     dependencies:
@@ -5764,21 +5723,6 @@ snapshots:
   ts-api-utils@2.5.0(@typescript/typescript6@6.0.2):
     dependencies:
       typescript: '@typescript/typescript6@6.0.2'
-
-  ts-poet@6.12.0:
-    dependencies:
-      dprint-node: 1.0.8
-
-  ts-proto-descriptors@2.1.0:
-    dependencies:
-      '@bufbuild/protobuf': 2.16.0
-
-  ts-proto@2.18.3:
-    dependencies:
-      '@bufbuild/protobuf': 2.16.0
-      case-anything: 2.1.13
-      ts-poet: 6.12.0
-      ts-proto-descriptors: 2.1.0
 
   tsconfig-paths@3.15.0:
     dependencies:
