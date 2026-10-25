@@ -144,6 +144,24 @@ accounting tasks, timers, downloads, and concurrent mapping changes remains in
 the next backend-refactor step; this change does not provide a distributed
 transaction across settings and Spoolman.
 
+## Filament accounting boundary
+
+`broker/filament_accounting.py` plans consumption from already-parsed usage,
+AMS mapping history and object-skip history. `plan_layer_usage` returns extrusion
+length grouped by logical filament and physical tray; `None` means the data or
+mapping is not ready, while an empty plan means no extrusion remains. It supports
+legacy layer totals and object/line-aware models through the `UsageSource`
+interface. Planning does not modify input models/history or access the network,
+configuration files, checkpoints or retry timers.
+
+`FilamentUsageTracker` remains responsible for MQTT lifecycle, model retrieval
+and parsing, reading tray-to-spool assignments, durable consumption intents,
+Spoolman delivery and retries. Refill mapping updates use the same extracted
+position-selection function as consumption, preserving layer/line boundaries.
+The existing checkpoint format and timeout reconciliation behavior are retained;
+external concurrent changes to spool totals remain a reconciliation limitation
+for a later change.
+
 ## CI checks and vulnerability remediation
 
 The required `verify` result aggregates backend tests, frontend checks, the

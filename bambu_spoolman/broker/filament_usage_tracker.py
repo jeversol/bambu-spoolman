@@ -20,10 +20,13 @@ from bambu_spoolman.broker.checkpoint import (
     save_checkpoint,
     update_layer,
 )
+from bambu_spoolman.broker.filament_accounting import (
+    mapping_at_position,
+    plan_layer_usage,
+)
 from bambu_spoolman.gcode.bambu import open_gcode
 from bambu_spoolman.gcode.parser import evaluate_gcode
 from bambu_spoolman.settings import (
-    EXTERNAL_SPOOL_ID,
     get_http_timeout,
     load_settings,
 )
@@ -552,34 +555,20 @@ class FilamentUsageTracker:
             return False
         logger.debug("Spending filament for layer {}", layer)
 
-        skipped_object_lines = getattr(self, "skipped_object_lines", {})
-        skipped_objects = {
-            object_id
-            for object_id, effective_layer in getattr(
-                self, "skipped_object_layers", {}
-            ).items()
-            if int(layer) >= effective_layer and object_id not in skipped_object_lines
-        }
-        if hasattr(self.active_model, "for_layer"):
-            layer_usage = self.active_model.for_layer(
-                layer, skipped_objects, skipped_object_lines
-            )
-        else:
-            layer_usage = self.active_model.get(int(layer))
-        if layer_usage is None:
-            logger.error("Failed to find filament usage for layer {}", layer)
-            return False
-
-        config = load_settings()
-
-        trays = config.get("trays", {})
-        spent_filaments = self.spent_filaments.setdefault(int(layer), set())
-        segment_usage = self._segment_usage_for_layer(
-            layer, layer_usage, skipped_objects, skipped_object_lines
+        segment_usage = plan_layer_usage(
+            self.active_model,
+            layer,
+            using_ams=self.using_ams,
+            mapping=self.ams_mapping,
+            mapping_history=getattr(self, "ams_mapping_history", []),
+            skipped_object_layers=getattr(self, "skipped_object_layers", {}),
+            skipped_object_lines=getattr(self, "skipped_object_lines", {}),
         )
         if segment_usage is None:
             return False
 
+        trays = load_settings().get("trays", {})
+        spent_filaments = self.spent_filaments.setdefault(int(layer), set())
         durable_tracking = hasattr(self, "spent_segments")
         if durable_tracking:
             spent_segments = self.spent_segments.setdefault(int(layer), set())
@@ -655,40 +644,6 @@ class FilamentUsageTracker:
             if filament not in spent_filaments
         }
         return not required_segments or required_segments.issubset(spent_segments)
-
-    def _segment_usage_for_layer(
-        self, layer, layer_usage, skipped_objects, skipped_object_lines
-    ):
-        segment_usage = {}
-        if hasattr(self.active_model, "events_for_layer"):
-            events = self.active_model.events_for_layer(
-                layer, skipped_objects, skipped_object_lines
-            )
-            for line, _object_id, filament, usage in events:
-                real_mapping = self._real_mapping_for_position(filament, layer, line)
-                if real_mapping is None:
-                    return None
-                key = (filament, real_mapping)
-                segment_usage[key] = segment_usage.get(key, 0) + usage
-            return segment_usage
-
-        for filament, usage in layer_usage.items():
-            real_mapping = self._real_mapping_for_position(filament, layer)
-            if real_mapping is None:
-                return None
-            segment_usage[(filament, real_mapping)] = usage
-        return segment_usage
-
-    def _real_mapping_for_position(self, filament, layer, line=None):
-        if not self.using_ams or not self.ams_mapping:
-            return EXTERNAL_SPOOL_ID
-        mapping = self._mapping_for_position(layer, line)
-        if filament >= len(mapping):
-            logger.error(
-                "Filament {} has no entry in AMS mapping {}", filament, mapping
-            )
-            return None
-        return mapping[filament]
 
     def _consume_segment_durably(
         self, layer, filament, tray, spool_id, length, segment_key
@@ -770,23 +725,12 @@ class FilamentUsageTracker:
         return self._mapping_for_position(layer)
 
     def _mapping_for_position(self, layer, line=None):
-        mapping = self.ams_mapping or []
-        for transition in sorted(
+        return mapping_at_position(
+            self.ams_mapping,
             getattr(self, "ams_mapping_history", []),
-            key=lambda item: (
-                int(item.get("layer", 0)),
-                int(item.get("line") or -1),
-            ),
-        ):
-            transition_layer = int(transition.get("layer", 0))
-            transition_line = transition.get("line")
-            if transition_layer > int(layer):
-                break
-            if transition_layer == int(layer) and transition_line is not None:
-                if line is None or int(transition_line) > int(line):
-                    continue
-            mapping = transition.get("mapping") or mapping
-        return mapping
+            layer,
+            line,
+        )
 
     def _handle_status_updates(self, print_obj, effective_layer):
         line_number = _normalize_line_number(print_obj.get("mc_print_line_number"))
