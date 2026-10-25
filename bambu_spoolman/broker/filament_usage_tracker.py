@@ -43,6 +43,8 @@ class FilamentUsageTracker:
         self.spoolman_client = new_client()
         self._lock = threading.RLock()
         self._retry_timer = None
+        self._retry_generation = 0
+        self._stopping = threading.Event()
         self.active_model = None
         self.ams_mapping = None
         self.spent_layers = set()
@@ -65,12 +67,48 @@ class FilamentUsageTracker:
         self._reset_checkpoint_recovery_guard()
         self._reset_spoolman_retry()
 
+    def _is_stopping(self):
+        stopping = getattr(self, "_stopping", None)
+        return stopping is not None and stopping.is_set()
+
+    def stop(self):
+        """Reject new work immediately, without waiting for an active request."""
+        self._stopping.set()
+        retry_timer = self._retry_timer
+        if retry_timer is not None:
+            retry_timer.cancel()
+
+    def close(self, timeout=30):
+        """Cancel retries and wait up to timeout seconds for active tracker work.
+
+        True means the active callback finished and the current timer exited.
+        False leaves any durable intent/checkpoint available for restart; a
+        synchronous request already in flight cannot be forcibly interrupted.
+        """
+        self.stop()
+        deadline = time.monotonic() + timeout
+        if not self._lock.acquire(timeout=max(0, timeout)):
+            return False
+        try:
+            retry_timer = self._retry_timer
+            self._reset_spoolman_retry()
+        finally:
+            self._lock.release()
+        # A timer may be waiting for _lock. Never join while holding that lock.
+        if retry_timer is not None and retry_timer is not threading.current_thread():
+            retry_timer.join(timeout=max(0, deadline - time.monotonic()))
+            return not retry_timer.is_alive()
+        return True
+
     def on_message(self, mqtt_handler, message):
+        if self._is_stopping():
+            return
         lock = getattr(self, "_lock", None)
         if lock is None:
             return self._on_message(mqtt_handler, message)
         with lock:
-            return self._on_message(mqtt_handler, message)
+            if not self._is_stopping():
+                return self._on_message(mqtt_handler, message)
 
     def _on_message(self, mqtt_handler, message):
         print_obj = message.get("print", {})
@@ -378,6 +416,10 @@ class FilamentUsageTracker:
             update_layer(*progress)
 
     def _schedule_spoolman_retry(self, layer, reason):
+        if self._is_stopping():
+            return
+        generation = getattr(self, "_retry_generation", 0) + 1
+        self._retry_generation = generation
         delay = getattr(self, "spoolman_retry_delay", SPOOLMAN_RETRY_INITIAL_SECONDS)
         self.spoolman_retry_at = time.monotonic() + delay
         self.spoolman_retry_delay = min(delay * 2, SPOOLMAN_RETRY_MAX_SECONDS)
@@ -385,10 +427,17 @@ class FilamentUsageTracker:
         if retry_timer is not None:
             retry_timer.cancel()
         if hasattr(self, "_lock"):
-            retry_timer = threading.Timer(delay, self._retry_pending_usage)
+            retry_timer = threading.Timer(
+                delay, lambda: self._retry_pending_usage(generation)
+            )
             retry_timer.daemon = True
             self._retry_timer = retry_timer
             retry_timer.start()
+            # stop() does not take _lock, so cover a concurrent stop between
+            # the initial guard and starting this timer.
+            if self._is_stopping():
+                retry_timer.cancel()
+                return
         logger.warning(
             "event=spoolman_retry_scheduled task_id={} layer={} "
             "retry_in_seconds={} reason={}",
@@ -399,6 +448,7 @@ class FilamentUsageTracker:
         )
 
     def _reset_spoolman_retry(self):
+        self._retry_generation = getattr(self, "_retry_generation", 0) + 1
         retry_timer = getattr(self, "_retry_timer", None)
         if retry_timer is not None:
             retry_timer.cancel()
@@ -406,8 +456,10 @@ class FilamentUsageTracker:
         self.spoolman_retry_at = 0
         self.spoolman_retry_delay = SPOOLMAN_RETRY_INITIAL_SECONDS
 
-    def _retry_pending_usage(self):
+    def _retry_pending_usage(self, generation):
         with self._lock:
+            if self._is_stopping() or generation != self._retry_generation:
+                return
             self._retry_timer = None
             if self.active_model is None or not self.print_started:
                 return
@@ -530,7 +582,7 @@ class FilamentUsageTracker:
         clear_checkpoint()
 
     def _spend_filament_for_layer(self, layer):
-        if self.active_model is None:
+        if self._is_stopping() or self.active_model is None:
             return False
         logger.debug("Spending filament for layer {}", layer)
 
@@ -562,6 +614,8 @@ class FilamentUsageTracker:
             )
 
         for (filament, real_mapping), usage in segment_usage.items():
+            if self._is_stopping():
+                return False
             segment_key = _segment_key(filament, real_mapping)
             if filament in spent_filaments or segment_key in spent_segments:
                 logger.debug(
