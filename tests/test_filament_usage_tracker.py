@@ -7,6 +7,7 @@ from unittest.mock import Mock, call, patch
 
 import requests
 
+from bambu_spoolman.broker.filament_accounting import plan_layer_usage
 from bambu_spoolman.broker.filament_usage_tracker import FilamentUsageTracker
 from bambu_spoolman.gcode.parser import evaluate_gcode
 from bambu_spoolman.settings import EXTERNAL_SPOOL_ID
@@ -576,11 +577,12 @@ G1 E3
             {"layer": 0, "line": 4, "mapping": [1]},
         ]
 
-        groups = self.tracker._segment_usage_for_layer(
+        groups = plan_layer_usage(
+            self.tracker.active_model,
             0,
-            self.tracker.active_model.for_layer(0),
-            set(),
-            {},
+            using_ams=self.tracker.using_ams,
+            mapping=self.tracker.ams_mapping,
+            mapping_history=self.tracker.ams_mapping_history,
         )
 
         self.assertEqual(groups, {(0, 0): 2.0, (0, 1): 3.0})
