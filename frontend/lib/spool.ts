@@ -26,6 +26,7 @@ export async function getSpool(id: string) {
   "use cache";
   cacheLife("seconds");
   cacheTag(getCacheTag(id));
+  cacheTag("spools");
 
   try {
     const response = await backendRequest<unknown>(

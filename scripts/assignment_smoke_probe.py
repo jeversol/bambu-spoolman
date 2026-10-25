@@ -21,7 +21,7 @@ SPOOLS = [
 class Spoolman(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/api/v1/info":
-            value = {"version": "0.26.0"}
+            value = {"version": "0.27.0"}
         elif self.path == "/api/v1/health":
             value = {"status": "healthy"}
         elif self.path == "/api/v1/spool":
@@ -38,6 +38,16 @@ class Spoolman(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def do_POST(self):
+        if self.path != "/api/v1/spool/43/tag":
+            self.send_error(404)
+            return
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        SPOOLS[1]["tags"] = [body]
+        self.send_response(201)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def log_message(self, *args):
         pass
 
@@ -45,8 +55,12 @@ class Spoolman(BaseHTTPRequestHandler):
 def main():
     base = f"http://{os.environ['HOSTNAME']}:3000"
 
-    def request(path, spool=None, status=200, origin=None, data=None):
+    def request(
+        path, spool=None, status=200, origin=None, data=None, payload=None, method=None
+    ):
         body = json.dumps({"spoolId": spool}).encode() if spool is not None else data
+        if payload is not None:
+            body = json.dumps(payload).encode()
         headers = {"Content-Type": "application/json"}
         if origin:
             headers["Origin"] = origin
@@ -54,7 +68,7 @@ def main():
             base + path,
             data=body,
             headers=headers,
-            method="PUT" if body is not None else "GET",
+            method=method or ("PUT" if body is not None else "GET"),
         )
         try:
             response = urllib.request.urlopen(value, timeout=10)
@@ -69,6 +83,9 @@ def main():
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
+        assert json.loads(request("/api/v1/printer"))["connected"] is False
+        assert json.loads(request("/api/v1/info"))["features"]["trayLocking"] is True
+        request("/")
         before = request("/external-spool")
         assert "No spool assigned to this slot" in before, before
         request("/api/v1/trays/255", 43, status=204, origin=base)
@@ -84,6 +101,31 @@ def main():
         request("/api/v1/trays/255", -1, status=204)
         cleared = request("/external-spool")
         assert "No spool assigned to this slot" in cleared, cleared
+        tag = "AABBCCDDEEFF00112233445566778899"
+        request("/api/v1/spools/43/rfid", payload={"uuid": tag}, status=204)
+        assert SPOOLS[1]["tags"] == [{"uid": tag, "format": "bambu-tray"}]
+        request("/api/v1/spools/43/rfid", payload={"uuid": ""}, status=400)
+        request(
+            "/api/v1/trays/0/rfid/override",
+            payload={"uuid": tag},
+            method="POST",
+            status=400,
+        )
+        request(
+            "/api/v1/trays/0/rfid/override",
+            payload={"uuid": tag},
+            method="POST",
+            status=403,
+            origin="https://other.invalid",
+        )
+        request(
+            "/api/v1/trays/0/rfid/unlink",
+            payload={"uuid": tag, "spoolId": 42},
+            method="POST",
+            status=400,
+        )
+        assert SPOOLS[1]["tags"] == [{"uid": tag, "format": "bambu-tray"}]
+
     finally:
         server.shutdown()
         server.server_close()

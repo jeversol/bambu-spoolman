@@ -1,14 +1,21 @@
-import { cacheLife } from "next/cache";
-import { grpcClient } from "./grpc";
+import { cacheLife, cacheTag } from "next/cache";
+import { backendRequest } from "./server/api";
 import type { PrinterStatus, PrinterTray } from "./types";
+
+type PrinterSnapshot = {
+  lastUpdated: number;
+  connected: boolean;
+  status: PrinterStatus;
+};
 
 const UNDEFINED_RFID_TAG = "00000000000000000000000000000000";
 
 async function getPrinterStatus() {
   "use cache";
   cacheLife("seconds");
+  cacheTag("printer");
 
-  const response = await grpcClient.getPrinterStatus({});
+  const response = await backendRequest<PrinterSnapshot>("/printer");
   return response;
 }
 

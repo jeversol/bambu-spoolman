@@ -10,8 +10,8 @@ import bambu_spoolman.grpc.bambu_spoolman_pb2 as pb2
 import bambu_spoolman.grpc.spoolman_pb2 as spoolman_pb2
 from bambu_spoolman.assignments import AssignmentError, assign_spool
 from bambu_spoolman.bambu_mqtt import stateful_printer_info
-from bambu_spoolman.broker.automatic_spool_switch import AutomaticSpoolSwitch
 from bambu_spoolman.grpc import bambu_spoolman_pb2_grpc
+from bambu_spoolman.rfid import RfidError, override_rfid, set_spool_rfid
 from bambu_spoolman.settings import load_settings
 from bambu_spoolman.spoolman import instance as spoolman_instance
 
@@ -102,49 +102,26 @@ class BambuSpoolmanServicer(bambu_spoolman_pb2_grpc.BambuSpoolmanServicer):
     async def SetTrayUUID(
         self, request: pb2.SetSpoolUUIDRequest, context: ServicerContext
     ):
-        tray_uuid = request.uuid
-        spool_id = request.spool_id
-
-        spool = await asyncio.to_thread(spoolman_instance().get_spool, spool_id)
-
-        logger.debug(f"spool: {spool}")
-
-        if spool is None:
-            await context.abort(grpc.StatusCode.NOT_FOUND, "Spool not found")
-
-        if not spoolman_instance().supports_tray_locking():
+        try:
+            await set_spool_rfid(int(request.spool_id), request.uuid)
+        except RfidError as error:
             await context.abort(
-                grpc.StatusCode.UNIMPLEMENTED,
-                "Spoolman instance does not support tray locking",
+                {
+                    404: grpc.StatusCode.NOT_FOUND,
+                    501: grpc.StatusCode.UNIMPLEMENTED,
+                    502: grpc.StatusCode.INTERNAL,
+                }.get(error.status, grpc.StatusCode.INVALID_ARGUMENT),
+                str(error),
             )
-
-        success = await asyncio.to_thread(
-            spoolman_instance().set_tray_uuid, spool_id, tray_uuid
-        )
-        if not success:
-            await context.abort(
-                grpc.StatusCode.INTERNAL, "Failed to set tray UUID for spool"
-            )
-
-        AutomaticSpoolSwitch.get_instance().sync()
-        logger.info(
-            "event=spool_rfid_updated spool_id={} linked={}",
-            spool_id,
-            bool(tray_uuid),
-        )
         return Empty()
 
     async def OverrideTrayRFID(
         self, request: pb2.OverrideTrayRFIDRequest, context: ServicerContext
     ):
-        success = AutomaticSpoolSwitch.get_instance().override_tray(
-            int(request.tray_id), request.uuid
-        )
-        if not success:
-            await context.abort(
-                grpc.StatusCode.INVALID_ARGUMENT,
-                "The RFID tag is no longer present in this tray",
-            )
+        try:
+            await override_rfid(int(request.tray_id), request.uuid)
+        except RfidError as error:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(error))
         return Empty()
 
 

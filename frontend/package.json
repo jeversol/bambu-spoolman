@@ -12,7 +12,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
-    "proto-generate": "protoc --plugin=./node_modules/.bin/protoc-gen-ts_proto --ts_proto_out=lib/proto --ts_proto_opt=outputServices=nice-grpc,outputServices=generic-definitions,useExactTypes=false -I ../proto $(find ../proto -name \"*.proto\" -type f)"
+    "proto-generate": "protoc --plugin=./node_modules/.bin/protoc-gen-ts_proto --ts_proto_out=lib/proto --ts_proto_opt=outputServices=false,useExactTypes=false -I ../proto $(find ../proto -name \"*.proto\" -type f)"
   },
   "dependencies": {
     "@bufbuild/protobuf": "^2.14.0",
@@ -22,8 +22,6 @@
     "clsx": "^2.1.1",
     "lucide-react": "^1.0.0",
     "next": "16.4.3",
-    "nice-grpc": "^2.1.17",
-    "nice-grpc-common": "^2.0.4",
     "radix-ui": "^1.6.7",
     "react": "19.3.1",
     "react-dom": "19.3.1",

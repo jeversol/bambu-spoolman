@@ -1,4 +1,5 @@
 import os
+import threading
 
 from loguru import logger
 
@@ -20,6 +21,7 @@ class AutomaticSpoolSwitch:
         return cls._INSTANCE
 
     def __init__(self):
+        self._lock = threading.RLock()
         self.spoolman_client = new_client()
         self.tray_mapping = None
         self.tag_mapping = None
@@ -41,24 +43,26 @@ class AutomaticSpoolSwitch:
             self._sync_trays(merged_print)
 
     def sync(self):
-        if not stateful_printer_info.connected:
-            logger.debug("Printer not connected. Skipping sync.")
-            return
+        with self._lock:
+            if not stateful_printer_info.connected:
+                logger.debug("Printer not connected. Skipping sync.")
+                return
 
-        print_obj = stateful_printer_info.get_info().get("print", {})
-        self.tray_mapping = None
-        self.tag_mapping = None
-        self._sync_trays(print_obj)
+            print_obj = stateful_printer_info.get_info().get("print", {})
+            self.tray_mapping = None
+            self.tag_mapping = None
+            self._sync_trays(print_obj)
 
     def _sync_trays(self, print_obj):
-        if self.tray_mapping is None:
-            # Do an initial sync
-            self.tray_mapping = {}
-            self.tag_mapping = {}
-            self._initial_sync(print_obj)
-        else:
-            # Check if the trays have changed
-            self._sync(print_obj)
+        with self._lock:
+            if self.tray_mapping is None:
+                # Do an initial sync
+                self.tray_mapping = {}
+                self.tag_mapping = {}
+                self._initial_sync(print_obj)
+            else:
+                # Check if the trays have changed
+                self._sync(print_obj)
 
     def _initial_sync(self, print_obj):
         if self.tag_mapping is None:
@@ -189,32 +193,35 @@ class AutomaticSpoolSwitch:
 
     def override_tray(self, tray_id, tray_uuid):
         """Pause RFID control while the specified tag remains in the tray."""
-        if not stateful_printer_info.connected:
-            return False
+        with self._lock:
+            if not stateful_printer_info.connected:
+                return False
 
-        print_obj = stateful_printer_info.get_info().get("print", {})
-        current_uuid = None
-        for ams in print_obj.get("ams", {}).get("ams", []):
-            for tray in ams.get("tray", []):
-                current_tray_id = int(ams["id"]) * 4 + int(tray["id"])
-                if current_tray_id == tray_id:
-                    current_uuid = tray.get("tray_uuid")
-                    break
+            print_obj = stateful_printer_info.get_info().get("print", {})
+            current_uuid = None
+            for ams in print_obj.get("ams", {}).get("ams", []):
+                for tray in ams.get("tray", []):
+                    current_tray_id = int(ams["id"]) * 4 + int(tray["id"])
+                    if current_tray_id == tray_id:
+                        current_uuid = tray.get("tray_uuid")
+                        break
 
-        if not tray_uuid or current_uuid != tray_uuid:
-            return False
+            if not tray_uuid or current_uuid != tray_uuid:
+                return False
 
-        with edit_settings() as settings:
-            overrides = settings.get("rfid_overrides", {})
-            overrides[str(tray_id)] = tray_uuid
-            settings["rfid_overrides"] = overrides
+            with edit_settings() as settings:
+                overrides = settings.get("rfid_overrides", {})
+                overrides[str(tray_id)] = tray_uuid
+                settings["rfid_overrides"] = overrides
 
-            locked = settings.get("locked_trays", [])
-            settings["locked_trays"] = [
-                locked_id for locked_id in locked if locked_id != tray_id
-            ]
-        logger.info("event=rfid_override_created tray={} uuid={}", tray_id, tray_uuid)
-        return True
+                locked = settings.get("locked_trays", [])
+                settings["locked_trays"] = [
+                    locked_id for locked_id in locked if locked_id != tray_id
+                ]
+            logger.info(
+                "event=rfid_override_created tray={} uuid={}", tray_id, tray_uuid
+            )
+            return True
 
     def _is_overridden(self, tray_id, tray_uuid):
         settings = load_settings()
