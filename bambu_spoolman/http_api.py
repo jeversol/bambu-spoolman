@@ -11,6 +11,7 @@ import requests
 from aiohttp import web
 from loguru import logger
 
+from bambu_spoolman.admission import MutationAdmission
 from bambu_spoolman.assignments import AssignmentError, assign_spool
 from bambu_spoolman.bambu_mqtt import stateful_printer_info
 from bambu_spoolman.rfid import (
@@ -26,6 +27,7 @@ from bambu_spoolman.spoolman import instance as spoolman_instance
 CLIENT = web.AppKey("spoolman", object)
 SWITCH = web.AppKey("rfid_switch", object)
 PRINTER = web.AppKey("printer", object)
+MUTATIONS = web.AppKey("mutations", MutationAdmission)
 
 
 @web.middleware
@@ -58,6 +60,8 @@ async def errors(request, handler):
         response = web.json_response({"error": "Spoolman is unavailable"}, status=502)
     except web.HTTPException as error:
         response = web.json_response({"error": error.reason}, status=error.status)
+        if "Retry-After" in error.headers:
+            response.headers["Retry-After"] = error.headers["Retry-After"]
     except Exception:
         logger.exception("event=http_request_failed")
         response = web.json_response({"error": "Internal server error"}, status=500)
@@ -104,8 +108,10 @@ async def json_body(request, fields):
 
 async def assignment(request):
     body = await json_body(request, {"spoolId"})
-    await assign_spool(
-        int(request.match_info["tray_id"]), body["spoolId"], request.app[CLIENT]
+    await request.app[MUTATIONS].run(
+        lambda: assign_spool(
+            int(request.match_info["tray_id"]), body["spoolId"], request.app[CLIENT]
+        )
     )
     return web.Response(status=204)
 
@@ -139,31 +145,37 @@ async def info(request):
 async def rfid_link(request):
     body = await json_body(request, {"uuid"})
     tag_uuid(body["uuid"])
-    await set_spool_rfid(
-        int(request.match_info["spool_id"]),
-        body["uuid"],
-        request.app[CLIENT],
-        request.app[SWITCH],
+    await request.app[MUTATIONS].run(
+        lambda: set_spool_rfid(
+            int(request.match_info["spool_id"]),
+            body["uuid"],
+            request.app[CLIENT],
+            request.app[SWITCH],
+        )
     )
     return web.Response(status=204)
 
 
 async def rfid_override(request):
     body = await json_body(request, {"uuid"})
-    await override_rfid(
-        int(request.match_info["tray_id"]), body["uuid"], request.app[SWITCH]
+    await request.app[MUTATIONS].run(
+        lambda: override_rfid(
+            int(request.match_info["tray_id"]), body["uuid"], request.app[SWITCH]
+        )
     )
     return web.Response(status=204)
 
 
 async def rfid_unlink(request):
     body = await json_body(request, {"spoolId", "uuid"})
-    await unlink_rfid(
-        int(request.match_info["tray_id"]),
-        body["spoolId"],
-        body["uuid"],
-        request.app[CLIENT],
-        request.app[SWITCH],
+    await request.app[MUTATIONS].run(
+        lambda: unlink_rfid(
+            int(request.match_info["tray_id"]),
+            body["spoolId"],
+            body["uuid"],
+            request.app[CLIENT],
+            request.app[SWITCH],
+        )
     )
     return web.Response(status=204)
 
@@ -217,6 +229,8 @@ def static_handler(directory):
 def create_app(client=None, switch=None, printer=None, static_dir=None):
     app = web.Application(middlewares=[errors], client_max_size=4096)
     app[CLIENT] = client if client is not None else spoolman_instance()
+    app[MUTATIONS] = MutationAdmission()
+    app.on_shutdown.append(app[MUTATIONS].shutdown)
     app[SWITCH] = switch
     app[PRINTER] = printer if printer is not None else stateful_printer_info
     app.add_routes(

@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 import requests
 from aiohttp.test_utils import TestClient, TestServer
 
-from bambu_spoolman.http_api import create_app
+from bambu_spoolman.http_api import MUTATIONS, create_app
 from bambu_spoolman.settings import load_settings, save_settings
 
 
@@ -136,3 +136,28 @@ class HttpApiTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.get("/api/v1/spools")
         self.assertEqual(response.status, 500)
         self.assertEqual((await response.json())["error"], "Internal server error")
+
+    async def test_all_write_routes_report_busy_without_starting_mutations(self):
+        gate = self.client.server.app[MUTATIONS]
+        release = asyncio.Event()
+        active = asyncio.create_task(gate.run(release.wait))
+        await asyncio.sleep(0)
+        queued = [asyncio.create_task(gate.run(release.wait)) for _ in range(8)]
+        await asyncio.sleep(0)
+        try:
+            for method, path, body in [
+                ("put", "/api/v1/trays/0", {"spoolId": 42}),
+                ("put", "/api/v1/spools/42/rfid", {"uuid": "tag"}),
+                ("post", "/api/v1/trays/0/rfid/override", {"uuid": "tag"}),
+                ("post", "/api/v1/trays/0/rfid/unlink", {"spoolId": 42, "uuid": "tag"}),
+            ]:
+                response = await getattr(self.client, method)(path, json=body)
+                self.assertEqual(response.status, 503)
+                self.assertEqual(response.headers["Retry-After"], "1")
+                self.assertEqual(response.headers["Cache-Control"], "no-store")
+                self.assertIn("busy", (await response.json())["error"])
+            self.assertEqual((await self.client.get("/api/v1/settings")).status, 200)
+            self.spoolman.get_spool.assert_not_called()
+        finally:
+            release.set()
+            await asyncio.gather(active, *queued)

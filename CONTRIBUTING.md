@@ -369,3 +369,13 @@ gh pr create --base main --fill
 
 Then ask for help resetting the local `main` branch if needed; the commit is
 safe on the new branch.
+
+API mapping writes have one active mutation and at most eight waiting requests
+per application instance. Waiters do not occupy executor threads. Excess writes
+receive JSON HTTP 503 with `Retry-After: 1`; refresh the mapping before retrying
+rather than automatically replaying a write. Cancellation drops queued work but
+an already-started mutation retains admission until its worker completes, since
+cancelling an async wait cannot stop a synchronous network operation. Shutdown
+rejects queued/new writes and allows five seconds for the active mutation to
+drain, logging pending work explicitly. MQTT mapping serialization remains in
+force; this API admission bound does not bound the MQTT message backlog.
