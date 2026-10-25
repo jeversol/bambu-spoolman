@@ -1,9 +1,13 @@
+import io
 import os
 import tempfile
+import time
 import unittest
 import zipfile
+from unittest.mock import patch
 
-from bambu_spoolman.gcode.bambu import open_gcode
+from bambu_spoolman.gcode.bambu import bounded_lines, open_gcode
+from bambu_spoolman.model_limits import ModelLimitError, ModelLimits
 
 
 class GcodeArchiveTests(unittest.TestCase):
@@ -75,6 +79,74 @@ class GcodeArchiveTests(unittest.TestCase):
 
         with open_gcode(archive_path) as gcode:
             self.assertIsNone(gcode)
+
+    def test_rejects_oversized_archive_and_selected_member(self):
+        path = self.create_archive({"plate.gcode": "M620 S0\nG1 E10\n"})
+        for limits in (ModelLimits(download_bytes=1), ModelLimits(gcode_bytes=1)):
+            with self.assertRaises(ModelLimitError):
+                with open_gcode(path, "plate.gcode", limits=limits) as gcode:
+                    list(gcode)
+
+    def test_compressed_oversized_gcode_is_rejected_before_inflation(self):
+        file = tempfile.NamedTemporaryFile(suffix=".3mf", delete=False)
+        file.close()
+        self.addCleanup(os.remove, file.name)
+        with zipfile.ZipFile(
+            file.name, "w", compression=zipfile.ZIP_DEFLATED
+        ) as archive:
+            archive.writestr("plate.gcode", b"A" * 100_000)
+        with patch(
+            "bambu_spoolman.gcode.bambu.zipfile.ZipFile.open",
+            side_effect=AssertionError("Member must not be inflated"),
+        ):
+            with self.assertRaises(ModelLimitError):
+                with open_gcode(
+                    file.name, "plate.gcode", limits=ModelLimits(gcode_bytes=10)
+                ):
+                    self.fail("Oversized compressed member was accepted")
+
+    def test_rejects_too_many_archive_entries(self):
+        path = self.create_archive({"a": "", "plate.gcode": ""})
+        with self.assertRaises(ModelLimitError):
+            with open_gcode(path, "plate.gcode", limits=ModelLimits(archive_entries=1)):
+                self.fail("Oversized member index was accepted")
+
+    def test_rejects_oversized_metadata_before_xml_parse(self):
+        path = self.create_archive({"Metadata/model_settings.config": "<root/>"})
+        with self.assertRaises(ModelLimitError):
+            with open_gcode(path, limits=ModelLimits(metadata_bytes=2)):
+                self.fail("Oversized XML was accepted")
+
+    def test_rejects_dtds_in_utf8_and_utf16_metadata(self):
+        xml = '<!DOCTYPE root [<!ENTITY expanded "value">]><root>&expanded;</root>'
+        for encoding in ("utf-8", "utf-16"):
+            path = self.create_archive(
+                {"Metadata/model_settings.config": xml.encode(encoding)}
+            )
+            with self.assertRaises(ModelLimitError):
+                with open_gcode(path):
+                    self.fail("XML DTD was accepted")
+
+    def test_enforces_line_count_line_bytes_and_actual_total_bytes(self):
+        for content, limits in (
+            ("ab\ncd\n", ModelLimits(gcode_lines=1)),
+            ("abcde\n", ModelLimits(line_bytes=5)),
+            ("éé\n", ModelLimits(line_bytes=4)),
+            ("ab\ncd\n", ModelLimits(gcode_bytes=5)),
+        ):
+            with self.subTest(content=content, limits=limits):
+                with self.assertRaises(ModelLimitError):
+                    list(bounded_lines(io.StringIO(content), limits, time.monotonic()))
+
+    def test_exact_line_and_byte_limits_are_accepted(self):
+        lines = list(
+            bounded_lines(
+                io.StringIO("ab\ncd\n"),
+                ModelLimits(gcode_bytes=6, line_bytes=3, gcode_lines=2),
+                time.monotonic(),
+            )
+        )
+        self.assertEqual(lines, ["ab\n", "cd\n"])
 
 
 if __name__ == "__main__":

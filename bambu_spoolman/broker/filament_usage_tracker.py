@@ -1,16 +1,11 @@
 import math
 import os
 import re
-import tempfile
 import threading
 import time
-import zipfile
-from urllib.parse import urlparse
 
-import requests
 from loguru import logger
 
-from bambu_spoolman.bambu_ftp import retrieve_3mf
 from bambu_spoolman.broker.checkpoint import (
     clear as clear_checkpoint,
 )
@@ -24,15 +19,15 @@ from bambu_spoolman.broker.filament_accounting import (
     mapping_at_position,
     plan_layer_usage,
 )
-from bambu_spoolman.gcode.bambu import open_gcode
-from bambu_spoolman.gcode.parser import evaluate_gcode
+from bambu_spoolman.broker.model_loader import (
+    load_model,
+    retrieve_model,
+)
 from bambu_spoolman.settings import (
-    get_http_timeout,
     load_settings,
 )
 from bambu_spoolman.spoolman import new_client
 
-MODEL_DOWNLOAD_CHUNK_SIZE = 64 * 1024
 ACTIVE_GCODE_STATES = frozenset({"PAUSE", "RUNNING"})
 FAILED_GCODE_STATES = frozenset({"FAILED", "FAILURE"})
 RECOVERABLE_GCODE_STATES = ACTIVE_GCODE_STATES | {"FINISH"}
@@ -230,79 +225,63 @@ class FilamentUsageTracker:
             logger.error("Failed to retrieve model. Print will not be tracked")
             return
 
-        ams_mapping = [
-            _normalize_mapping(mapping)
-            for mapping in (print_obj.get("ams_mapping") or [])
-        ]
-        if print_obj.get("use_ams", False) or (
-            ams_mapping and ams_mapping[0] not in (-1, 255)
-        ):
-            self.using_ams = True
-            self.ams_mapping = ams_mapping
-            self.ams_mapping_history = [{"layer": 0, "mapping": list(self.ams_mapping)}]
-            logger.info(
-                "event=print_ams_mapping task_id={} using_ams=true mapping={}",
-                self.task_id,
-                self.ams_mapping,
-            )
-        else:
-            self.using_ams = False
-            self.ams_mapping = None  # Ensure this is cleared out
-            logger.info(
-                "event=print_ams_mapping task_id={} using_ams=false",
-                self.task_id,
+        try:
+            ams_mapping = [
+                _normalize_mapping(mapping)
+                for mapping in (print_obj.get("ams_mapping") or [])
+            ]
+            if print_obj.get("use_ams", False) or (
+                ams_mapping and ams_mapping[0] not in (-1, 255)
+            ):
+                self.using_ams = True
+                self.ams_mapping = ams_mapping
+                self.ams_mapping_history = [
+                    {"layer": 0, "mapping": list(self.ams_mapping)}
+                ]
+                logger.info(
+                    "event=print_ams_mapping task_id={} using_ams=true mapping={}",
+                    self.task_id,
+                    self.ams_mapping,
+                )
+            else:
+                self.using_ams = False
+                self.ams_mapping = None  # Ensure this is cleared out
+                logger.info(
+                    "event=print_ams_mapping task_id={} using_ams=false",
+                    self.task_id,
+                )
+
+            gcode_file_name = print_obj.get("param")
+
+            if not self._load_model(model, gcode_file_name):
+                return
+
+            save_checkpoint(
+                model_path=model,
+                current_layer=0,
+                spent_layers=self.spent_layers,
+                spent_filaments=self.spent_filaments,
+                task_id=print_obj.get("task_id"),
+                subtask_id=print_obj.get("subtask_id"),
+                ams_mapping=self.ams_mapping,
+                gcode_file_name=gcode_file_name,
+                using_ams=self.using_ams,
+                print_started=self.print_started,
+                print_name=self.print_name,
+                ams_mapping_history=self.ams_mapping_history,
+                active_logical_filament=self.active_logical_filament,
+                last_active_tray=self.last_active_tray,
+                skipped_object_layers=self.skipped_object_layers,
+                skipped_object_lines=self.skipped_object_lines,
+                spent_segments=self.spent_segments,
+                pending_consumption=self.pending_consumption,
             )
 
-        gcode_file_name = print_obj.get("param")
-
-        if not self._load_model(model, gcode_file_name):
+        finally:
             os.remove(model)
-            return
-
-        save_checkpoint(
-            model_path=model,
-            current_layer=0,
-            spent_layers=self.spent_layers,
-            spent_filaments=self.spent_filaments,
-            task_id=print_obj.get("task_id"),
-            subtask_id=print_obj.get("subtask_id"),
-            ams_mapping=self.ams_mapping,
-            gcode_file_name=gcode_file_name,
-            using_ams=self.using_ams,
-            print_started=self.print_started,
-            print_name=self.print_name,
-            ams_mapping_history=self.ams_mapping_history,
-            active_logical_filament=self.active_logical_filament,
-            last_active_tray=self.last_active_tray,
-            skipped_object_layers=self.skipped_object_layers,
-            skipped_object_lines=self.skipped_object_lines,
-            spent_segments=self.spent_segments,
-            pending_consumption=self.pending_consumption,
-        )
-
-        # Delete the downloaded model
-        os.remove(model)
 
     def _retrieve_model(self, model_url):
-        logger.debug("Loading model from URL: {}", model_url)
-
-        if not model_url:
-            logger.warning("Print announcement did not include a model URL")
-            return None
-
-        ftp_uris = ("file", "ftp", "brtc")
-
-        # Turn URL into a URI
-        uri = urlparse(model_url)
-
-        if uri.scheme == "https" or uri.scheme == "http":
-            return self._download_model(model_url)
-        elif uri.scheme in ftp_uris:
-            path = f"{uri.netloc}{uri.path}"
-            return self._retrieve_model_from_ftp(path)
-        else:
-            logger.warning("Unsupported model URL: {}", model_url)
-            return None
+        return retrieve_model(model_url)
 
     def _handle_layer_change(self, layer):
         if self.active_model is None:
@@ -867,73 +846,11 @@ class FilamentUsageTracker:
         )
         return True
 
-    def _download_model(self, model_url):
-        logger.info("event=model_download_started scheme=http")
-
-        temp_file_name = None
-        response = None
-        downloaded_bytes = 0
-        started_at = time.monotonic()
-        try:
-            with tempfile.NamedTemporaryFile(suffix=".3mf", delete=False) as model_file:
-                temp_file_name = model_file.name
-                response = requests.get(
-                    model_url,
-                    timeout=get_http_timeout(),
-                    stream=True,
-                )
-                response.raise_for_status()
-
-                for chunk in response.iter_content(
-                    chunk_size=MODEL_DOWNLOAD_CHUNK_SIZE
-                ):
-                    if chunk:
-                        model_file.write(chunk)
-                        downloaded_bytes += len(chunk)
-        except Exception as e:
-            logger.error("Failed to download model: {}", e)
-            if temp_file_name is not None:
-                try:
-                    os.remove(temp_file_name)
-                except FileNotFoundError:
-                    pass
-            return None
-        finally:
-            if response is not None:
-                response.close()
-
-        logger.info(
-            "event=model_download_complete bytes={} duration_seconds={:.3f}",
-            downloaded_bytes,
-            time.monotonic() - started_at,
-        )
-        return temp_file_name
-
-    def _retrieve_model_from_ftp(self, model_path):
-        logger.debug("Retrieving model from FTP path: {}", model_path)
-
-        mount_prefixes = ("/sdcard/", "/media/usb0/")
-
-        # Remove fs mount prefixes
-        for p in mount_prefixes:
-            if model_path.startswith(p):
-                model_path = model_path.removeprefix(p)
-                break
-
-        # Retrieve from FTP server
-        return retrieve_3mf(model_path)
-
     def _load_model(self, model_path, gcode_file):
         self.active_model = None
         started_at = time.monotonic()
-        try:
-            with open_gcode(model_path, gcode_file) as gcode:
-                if gcode is None:
-                    logger.error("Failed to extract gcode from model")
-                    return False
-                active_model = evaluate_gcode(gcode)
-        except (OSError, UnicodeError, ValueError, zipfile.BadZipFile) as e:
-            logger.error("Failed to parse GCODE from model: {}", e)
+        active_model = load_model(model_path, gcode_file)
+        if active_model is None:
             return False
 
         self.active_model = active_model

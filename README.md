@@ -64,6 +64,11 @@ For older Spoolman versions, create a spool-level Text custom field and set
 mappings migrate as their spools are encountered; remove the fallback once migration
 is complete.
 
+Large-model budgets can be adjusted with `BAMBU_SPOOLMAN_MODEL_*` environment
+variables; see [model loading limits](CONTRIBUTING.md#model-loading-and-resource-limits)
+for defaults and units. Models exceeding a budget are rejected without recording
+partial filament usage.
+
 ### Application architecture
 
 The container runs one Python process serving the React dashboard and HTTP API

@@ -5,6 +5,12 @@ import tempfile
 
 from loguru import logger
 
+from bambu_spoolman.model_limits import (
+    DownloadBudget,
+    ModelLimitError,
+    get_model_limits,
+)
+
 FTP_DOWNLOAD_BLOCK_SIZE = 64 * 1024
 
 
@@ -34,9 +40,10 @@ class ImplicitFTP_TLS(ftplib.FTP_TLS):
         return conn, size
 
 
-def retrieve_3mf(filename):
+def retrieve_3mf(filename, *, limits=None):
     logger.debug("Retrieving cached 3mf file {}", filename)
     temp_file_name = None
+    limits = limits or get_model_limits()
     try:
         with ImplicitFTP_TLS() as ftp:
             ftp.set_pasv(True)
@@ -48,17 +55,20 @@ def retrieve_3mf(filename):
             logger.debug("Checking if file {} exists", filename)
             size = ftp.size(filename)
             logger.debug("File {} exists, size: {}", filename, size)
+            if isinstance(size, int) and size > limits.download_bytes:
+                raise ModelLimitError("Model exceeds the download byte budget")
 
             # Get the file
             logger.debug("Retrieving file {}", filename)
             with tempfile.NamedTemporaryFile(delete=False, suffix=".3mf") as f:
                 temp_file_name = f.name
+                budget = DownloadBudget(f, limits)
                 ftp.retrbinary(
                     f"RETR {filename}",
-                    f.write,
+                    budget.write,
                     blocksize=FTP_DOWNLOAD_BLOCK_SIZE,
                 )
-    except ftplib.all_errors as e:
+    except (*ftplib.all_errors, ModelLimitError) as e:
         logger.error("Failed to retrieve file {}: {}", filename, e)
         if temp_file_name is not None:
             try:
