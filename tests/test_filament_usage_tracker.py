@@ -22,6 +22,7 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
         timers.start()
         self.addCleanup(timers.stop)
         client = Mock()
+        client.endpoint = "http://spoolman.test"
         client.get_spool.return_value = {"used_length": 0}
         self.tracker = FilamentUsageTracker(client=client)
         self.addCleanup(self.tracker.stop)
@@ -133,11 +134,12 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
         self.tracker.using_ams = True
         self.tracker.ams_mapping = [0, 1]
         self.tracker.spoolman_client = Mock()
+        self.tracker.spoolman_client.endpoint = "http://spoolman.test"
         self.tracker.spoolman_client.get_spool.return_value = {"used_length": 0}
-        self.tracker.spoolman_client.consume_spool.side_effect = [
-            None,
+        self.tracker.spoolman_client.get_spool.side_effect = [
+            {"used_length": 0},
             RuntimeError("Spoolman unavailable"),
-            None,
+            {"used_length": 0},
         ]
         self.tracker._spend_filament_for_layer = (
             FilamentUsageTracker._spend_filament_for_layer.__get__(self.tracker)
@@ -157,7 +159,6 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
             self.tracker.spoolman_client.consume_spool.call_args_list,
             [
                 call(10, length=10),
-                call(11, length=20),
                 call(11, length=20),
             ],
         )
@@ -546,6 +547,7 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
         self.tracker.last_active_tray = None
         self.tracker.skipped_object_layers = {}
         self.tracker.spoolman_client = Mock()
+        self.tracker.spoolman_client.endpoint = "http://spoolman.test"
         self.tracker.spoolman_client.get_spool.return_value = {"used_length": 0}
         self.tracker._spend_filament_for_layer = (
             FilamentUsageTracker._spend_filament_for_layer.__get__(self.tracker)
@@ -592,7 +594,7 @@ G1 E3
 
     @patch("bambu_spoolman.broker.checkpoint.update_layer")
     @patch("bambu_spoolman.broker.filament_usage_tracker.load_settings")
-    def test_reconciles_timed_out_consumption_without_duplicate_request(
+    def test_pauses_timed_out_consumption_without_guessing_from_totals(
         self, load_settings, update_layer
     ):
         self.tracker.active_model = {0: {0: 10}}
@@ -609,6 +611,7 @@ G1 E3
             FilamentUsageTracker._spend_filament_for_layer.__get__(self.tracker)
         )
         self.tracker.spoolman_client = Mock()
+        self.tracker.spoolman_client.endpoint = "http://spoolman.test"
         self.tracker.spoolman_client.get_spool.return_value = {"used_length": 0}
         self.tracker.spoolman_client.get_spool.side_effect = [
             {"used_length": 100},
@@ -626,8 +629,11 @@ G1 E3
         self.tracker.spoolman_client.consume_spool.assert_called_once_with(
             99, length=10
         )
-        self.assertIn(0, self.tracker.checkpoint.progress.spent_layers)
-        self.assertIsNone(self.tracker.checkpoint.progress.pending_consumption)
+        self.assertNotIn(0, self.tracker.checkpoint.progress.spent_layers)
+        self.assertIsNotNone(self.tracker.checkpoint.progress.pending_consumption)
+        self.assertTrue(self.tracker._accounting_blocked)
+        self.assertIsNone(self.tracker._retry_timer)
+        self.assertEqual(self.tracker.spoolman_client.get_spool.call_count, 1)
 
     def test_prepare_status_cannot_remap_print_to_previously_loaded_tray(self):
         self.tracker.active_model = {0: {0: 10}}
@@ -672,6 +678,7 @@ G1 E5
         self.tracker.last_active_tray = None
         self.tracker.skipped_object_layers = {7: 0}
         self.tracker.spoolman_client = Mock()
+        self.tracker.spoolman_client.endpoint = "http://spoolman.test"
         self.tracker.spoolman_client.get_spool.return_value = {"used_length": 0}
         self.tracker._spend_filament_for_layer = (
             FilamentUsageTracker._spend_filament_for_layer.__get__(self.tracker)

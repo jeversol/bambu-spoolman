@@ -7,10 +7,17 @@ from unittest.mock import patch
 
 from bambu_spoolman.broker import checkpoint
 from bambu_spoolman.broker.consumption import ConsumptionDelivery
+from bambu_spoolman.broker.consumption_recovery import (
+    accounting_status,
+    resolve_consumption,
+)
+from bambu_spoolman.broker.consumption_state import AmbiguousConsumption
 from bambu_spoolman.broker.print_checkpoint import PrintCheckpoint
 
 
 class Spools:
+    endpoint = "http://spoolman.test"
+
     def __init__(self):
         self.used = {42: 100, 43: 200}
         self.requests = []
@@ -97,20 +104,40 @@ class ConsumptionDeliveryTests(unittest.TestCase):
 
     def test_partial_failure_recovery_does_not_repeat_successful_segment(self):
         self.client.fail_before = 43
-        with self.assertRaises(TimeoutError):
+        with self.assertRaises(AmbiguousConsumption):
             self.deliver()
         recovered = self.restart()
         self.assertEqual(recovered.progress.spent_segments, {0: {"0:0"}})
         self.assertEqual(recovered.progress.pending_consumption["spool_id"], 43)
         self.client.fail_before = None
-        self.assertTrue(self.deliver(recovered))
+        with self.assertRaises(AmbiguousConsumption):
+            self.deliver(recovered)
+        status = accounting_status(self.client.endpoint)
+        resolve_consumption(
+            status["pending"]["intentId"],
+            43,
+            "not-applied",
+            "Independent fixture evidence: request did not apply",
+            self.client.endpoint,
+        )
+        self.assertTrue(self.deliver(self.restart()))
         self.assertEqual(self.client.requests, [(42, 10), (43, 20), (43, 20)])
         self.assertEqual(self.client.used, {42: 110, 43: 220})
 
-    def test_existing_timeout_policy_reconciles_applied_request_after_restart(self):
+    def test_applied_timeout_requires_explicit_confirmation_after_restart(self):
         self.client.fail_after = 42
-        with self.assertRaises(TimeoutError):
+        with self.assertRaises(AmbiguousConsumption):
             self.deliver(plan={(0, 0): 10})
+        with self.assertRaises(AmbiguousConsumption):
+            self.deliver(self.restart(), plan={(0, 0): 10})
+        status = accounting_status(self.client.endpoint)
+        resolve_consumption(
+            status["pending"]["intentId"],
+            42,
+            "applied",
+            "Fixture transaction committed",
+            self.client.endpoint,
+        )
         self.assertTrue(self.deliver(self.restart(), plan={(0, 0): 10}))
         self.assertEqual(self.client.requests, [(42, 10)])
         self.assertIsNone(checkpoint.get_checkpoint_metadata()["pending_consumption"])
@@ -147,13 +174,27 @@ class ConsumptionDeliveryTests(unittest.TestCase):
             checkpoint.get_checkpoint_metadata()["pending_consumption"]["segment_key"],
             "0:1",
         )
-        self.assertTrue(self.deliver(self.restart(), plan={(0, 0): 10, (0, 1): 20}))
+        with self.assertRaises(AmbiguousConsumption):
+            self.deliver(self.restart(), plan={(0, 0): 10, (0, 1): 20})
+        # The still-running process observed success and retained that fact.
+        self.assertTrue(self.deliver(self.journal, plan={(0, 0): 10, (0, 1): 20}))
         self.assertEqual(self.client.requests, [(42, 10), (43, 20)])
 
-    def test_failed_reconciliation_save_keeps_intent_until_persisted(self):
-        self.client.fail_after = 42
-        with self.assertRaises(TimeoutError):
-            self.deliver(plan={(0, 0): 10})
+    def test_failed_reconciliation_save_keeps_confirmed_intent_until_persisted(self):
+        save = checkpoint._save_checkpoint_metadata
+
+        def fail_ack(metadata):
+            if metadata.get("pending_consumption") is None:
+                raise OSError("ack failed")
+            save(metadata)
+
+        with patch(
+            "bambu_spoolman.broker.checkpoint._save_checkpoint_metadata",
+            side_effect=fail_ack,
+        ):
+            with self.assertRaises(OSError):
+                self.deliver(plan={(0, 0): 10})
+        self.journal.save(0)  # Persist the observed response before restart.
         recovered = self.restart()
         with patch(
             "bambu_spoolman.broker.checkpoint.os.replace",
@@ -161,7 +202,9 @@ class ConsumptionDeliveryTests(unittest.TestCase):
         ):
             with self.assertRaises(OSError):
                 self.deliver(recovered, plan={(0, 0): 10})
-        self.assertIsNotNone(recovered.progress.pending_consumption)
+        self.assertEqual(
+            recovered.progress.pending_consumption["delivery_state"], "confirmed"
+        )
         self.assertEqual(recovered.progress.spent_segments, {0: set()})
         self.assertTrue(self.deliver(recovered, plan={(0, 0): 10}))
         self.assertEqual(self.client.requests, [(42, 10)])
@@ -188,3 +231,91 @@ class ConsumptionDeliveryTests(unittest.TestCase):
             Path(checkpoint.checkpoint_directory(), "model.3mf").read_bytes(),
             self.model.read_bytes(),
         )
+
+    def test_changed_external_totals_cannot_authorize_acknowledgment_or_replay(self):
+        self.client.fail_after = 42
+        with self.assertRaises(AmbiguousConsumption):
+            self.deliver(plan={(0, 0): 10})
+        for observed in (90, 100, 110, 130):
+            self.client.used[42] = observed
+            with patch.object(self.client, "get_spool") as read:
+                with self.assertRaises(AmbiguousConsumption):
+                    self.deliver(self.restart(), plan={(0, 0): 10})
+                read.assert_not_called()
+        self.assertEqual(self.client.requests, [(42, 10)])
+        self.assertTrue(accounting_status(self.client.endpoint)["blocked"])
+
+    def test_failed_inflight_save_is_known_unsent_and_can_resume_original_spool(self):
+        save = checkpoint._save_checkpoint_metadata
+
+        def fail_issue(metadata):
+            if (metadata.get("pending_consumption") or {}).get(
+                "delivery_state"
+            ) == "in_flight":
+                raise OSError("disk full")
+            save(metadata)
+
+        with patch(
+            "bambu_spoolman.broker.checkpoint._save_checkpoint_metadata",
+            side_effect=fail_issue,
+        ):
+            with self.assertRaises(OSError):
+                self.deliver(plan={(0, 0): 10})
+        self.assertEqual(self.client.requests, [])
+        self.assertEqual(
+            self.journal.progress.pending_consumption["delivery_state"], "prepared"
+        )
+        self.trays["0"] = 999  # Must not redirect saved usage to a replacement.
+        self.assertTrue(self.deliver(self.restart(), plan={(0, 0): 10}))
+        self.assertEqual(self.client.requests, [(42, 10)])
+
+    def test_changed_server_blocks_prepared_work(self):
+        save = checkpoint._save_checkpoint_metadata
+
+        def fail_issue(metadata):
+            if (metadata.get("pending_consumption") or {}).get(
+                "delivery_state"
+            ) == "in_flight":
+                raise OSError("disk full")
+            save(metadata)
+
+        with patch(
+            "bambu_spoolman.broker.checkpoint._save_checkpoint_metadata",
+            side_effect=fail_issue,
+        ):
+            with self.assertRaises(OSError):
+                self.deliver(plan={(0, 0): 10})
+        self.client.endpoint = "http://different.test"
+        with self.assertRaises(AmbiguousConsumption):
+            self.deliver(self.restart(), plan={(0, 0): 10})
+        self.assertEqual(self.client.requests, [])
+
+    def test_active_request_does_not_report_a_false_pause(self):
+        entered, release = threading.Event(), threading.Event()
+        self.client.fail_after = 42
+
+        def delay(spool):
+            entered.set()
+            release.wait(3)
+
+        self.client.before_send = delay
+        errors = []
+
+        def send():
+            try:
+                self.deliver(plan={(0, 0): 10})
+            except AmbiguousConsumption as error:
+                errors.append(error)
+
+        worker = threading.Thread(target=send)
+        worker.start()
+        try:
+            self.assertTrue(entered.wait(1))
+            status = accounting_status(self.client.endpoint)
+            self.assertFalse(status["blocked"])
+            self.assertEqual(status["pending"]["state"], "sending")
+        finally:
+            release.set()
+            worker.join(1)
+        self.assertEqual(len(errors), 1)
+        self.assertTrue(accounting_status(self.client.endpoint)["blocked"])

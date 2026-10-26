@@ -16,7 +16,7 @@ def checkpoint_directory():
 
 
 def get_checkpoint_metadata():
-    metadata_path = os.path.join(checkpoint_directory(), "metadata.json")
+    metadata_path = os.path.join(get_configuration_path("checkpoint"), "metadata.json")
 
     if not os.path.exists(metadata_path):
         return {}

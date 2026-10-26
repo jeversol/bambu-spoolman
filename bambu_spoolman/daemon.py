@@ -13,6 +13,7 @@ from bambu_spoolman.bambu_mqtt import (
     stateful_printer_info,
 )
 from bambu_spoolman.broker.automatic_spool_switch import AutomaticSpoolSwitch
+from bambu_spoolman.broker.consumption_recovery import accounting_lease
 from bambu_spoolman.broker.filament_usage_tracker import FilamentUsageTracker
 from bambu_spoolman.build_info import get_build_info
 from bambu_spoolman.http_api import serve as run_http_server
@@ -21,6 +22,11 @@ from bambu_spoolman.spoolman import new_client
 
 
 async def async_main():
+    with accounting_lease():
+        await _run_service()
+
+
+async def _run_service():
     require_dispatch_reconciliation()
     build = get_build_info()
     printer_ip = os.environ.get("PRINTER_IP")

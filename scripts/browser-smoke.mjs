@@ -66,6 +66,25 @@ try {
   await visible(mapped.getByText("#42 · Smoke spool 42", { exact: true }));
   settings = await (await page.request.get(`${base}/api/v1/settings`)).json();
   assert.deepEqual(settings.trays, { "0": 42 });
+  // Accounting warnings remain visible independently of upstream dashboard reads.
+  let accountingFailure = false;
+  await page.route("**/api/v1/accounting", (route) => route.fulfill({
+    status: accountingFailure ? 500 : 200,
+    contentType: "application/json",
+    body: JSON.stringify(accountingFailure ? { error: "status unavailable" } : {
+      blocked: true, pending: { spoolId: 42, lengthMm: 10 },
+    }),
+  }));
+  await failure(true);
+  await page.reload();
+  await visible(page.getByRole("alert").filter({ hasText: "Filament accounting is paused" }));
+  await visible(page.getByRole("alert").filter({ hasText: "Could not refresh" }));
+  assert.equal(await page.getByRole("link", { name: "consumption recovery instructions" }).count(), 1);
+  accountingFailure = true;
+  await failure(false);
+  await page.reload();
+  await visible(page.getByRole("alert").filter({ hasText: "Accounting status is unavailable" }));
+  await page.unroute("**/api/v1/accounting");
   assert.deepEqual(errors, []);
   console.log("Browser smoke passed: assignment/removal, deep links, history, theme, paused polling, outage/recovery");
 } finally {
