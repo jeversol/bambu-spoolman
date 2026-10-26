@@ -26,20 +26,21 @@ class TrackerShutdownTests(unittest.TestCase):
     def test_close_cancels_and_joins_real_pending_timer_without_clearing_progress(self):
         tracker = self.make_tracker()
         tracker.active_model = {0: {0: 10}}
-        tracker.pending_consumption = {"spool_id": 42, "length": 10}
-        tracker.spent_segments = {0: {"0:0"}}
+        tracker.checkpoint.progress.pending_consumption = {"spool_id": 42, "length": 10}
+        tracker.checkpoint.progress.spent_segments = {0: {"0:0"}}
         tracker.spoolman_retry_delay = 60
         with tracker._lock:
             tracker._schedule_spoolman_retry(0, "offline")
         timer = tracker._retry_timer
-        with patch(
-            "bambu_spoolman.broker.filament_usage_tracker.clear_checkpoint"
-        ) as clear:
+        with patch("bambu_spoolman.broker.checkpoint.clear") as clear:
             self.assertTrue(tracker.close(timeout=2))
             self.assertTrue(tracker.close(timeout=2))
         self.assertFalse(timer.is_alive())
-        self.assertEqual(tracker.pending_consumption, {"spool_id": 42, "length": 10})
-        self.assertEqual(tracker.spent_segments, {0: {"0:0"}})
+        self.assertEqual(
+            tracker.checkpoint.progress.pending_consumption,
+            {"spool_id": 42, "length": 10},
+        )
+        self.assertEqual(tracker.checkpoint.progress.spent_segments, {0: {"0:0"}})
         clear.assert_not_called()
         tracker.spoolman_client.consume_spool.assert_not_called()
 
@@ -165,7 +166,7 @@ class TrackerShutdownTests(unittest.TestCase):
             self.assertEqual(metadata["spent_segments"], {"0": ["0:0"]})
             self.assertIsNone(metadata["pending_consumption"])
         self.assertEqual(metadata["spent_layers"], [])
-        self.assertNotIn(0, tracker.spent_layers)
+        self.assertNotIn(0, tracker.checkpoint.progress.spent_layers)
         self.assertIsNone(tracker._retry_timer)
 
     def test_stop_finishes_current_segment_checkpoint_without_starting_next(self):
