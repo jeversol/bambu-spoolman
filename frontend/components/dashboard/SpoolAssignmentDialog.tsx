@@ -1,5 +1,3 @@
-"use client";
-
 import { type IDetectedBarcode, Scanner } from "@yudiel/react-qr-scanner";
 import { AlertCircle, ScanLine, Search, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";

@@ -63,18 +63,6 @@ class SpoolmanClient:
         response.raise_for_status()
         return response.json()
 
-    def get_filaments(self):
-        """
-        Get a list of all filaments
-        """
-        response = requests.get(
-            self._make_api_route("filament"),
-            verify=self.verify,
-            timeout=self.timeout,
-        )
-        response.raise_for_status()
-        return response.json()
-
     def get_spools(self):
         """
         Get a list of all spools

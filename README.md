@@ -11,7 +11,7 @@ retaining its Git history and MIT license.
 ## Quickstart
 
 > [!WARNING]
-> The app has no built-in authentication. Keep the web UI and gRPC service on a
+> The app has no built-in authentication. Keep the web UI and HTTP API on a
 > trusted private network, or use an authenticating reverse proxy for remote access.
 
 Download the configuration:
@@ -65,7 +65,7 @@ mappings migrate as their spools are encountered; remove the fallback once migra
 is complete.
 
 Large-model budgets can be adjusted with `BAMBU_SPOOLMAN_MODEL_*` environment
-variables; see [model loading limits](CONTRIBUTING.md#model-loading-and-resource-limits)
+variables; see [model loading limits](bambu_spoolman/model_limits.py)
 for defaults and units. Models exceeding a budget are rejected without recording
 partial filament usage.
 
@@ -120,8 +120,6 @@ Audit dependencies:
 ```sh
 sh scripts/security-audit.sh
 ```
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the Git and pull request workflow.
 
 ## Untested configurations
 

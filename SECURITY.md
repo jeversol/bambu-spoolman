@@ -37,7 +37,7 @@ UI and API on port 3000; no internal gRPC listener remains.
 
 ## Reportable Findings and Severity Context
 
-Internet exposure of the unauthenticated UI or gRPC service is a deployment
+Internet exposure of the unauthenticated UI or HTTP API is a deployment
 misconfiguration rather than a vulnerability in the supported deployment.
 Missing built-in UI authentication alone is an accepted risk and should be
 reported as low severity when the trusted-private-network boundary is

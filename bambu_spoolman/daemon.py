@@ -1,5 +1,4 @@
 import asyncio
-import datetime
 import os
 import platform
 import signal
@@ -139,29 +138,3 @@ async def _run_service():
 def main():
     load_dotenv()
     asyncio.run(async_main())
-
-
-def testing():
-    load_dotenv()
-
-    mqtt = MqttHandler(
-        os.environ.get("PRINTER_IP"),
-        os.environ.get("PRINTER_SERIAL"),
-        os.environ.get("PRINTER_ACCESS_CODE"),
-    )
-
-    stateful_printer_info.mqtt_handler = mqtt
-
-    mqtt.add_callback(stateful_printer_info.handle_message)
-
-    file = open("messages.log", "w")
-
-    def handle_message(mqtt_handler, message):
-        ts = datetime.datetime.now().isoformat()
-        file.write(f"[{ts}]: {message}\n")
-        file.flush()
-
-    mqtt.add_callback(handle_message)
-
-    mqtt.start()
-    mqtt.join()
