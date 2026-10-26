@@ -22,7 +22,7 @@ mqtt-replay = "bambu_spoolman.debug.replay:main"
 
 [dependency-groups]
 dev = [
-    "ruff==0.16.10",
+    "ruff==0.17.2",
     "setuptools>=83.0.0",
 ]
 
