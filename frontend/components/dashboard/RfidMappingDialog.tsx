@@ -1,5 +1,3 @@
-"use client";
-
 import { AlertCircle, LockKeyhole, X } from "lucide-react";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -9,7 +7,7 @@ import {
   linkRfidMapping,
   overrideRfidMapping,
   unlinkRfidMapping,
-} from "./actions";
+} from "@/lib/client/rfid";
 
 type Props = {
   tray: DashboardTray;

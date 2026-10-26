@@ -3,3 +3,5 @@ dev/data/
 .env
 /settings.json
 messages.log
+.venv/
+.ruff_cache/

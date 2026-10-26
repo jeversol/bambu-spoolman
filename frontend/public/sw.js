@@ -1,5 +1,7 @@
+// Retire service workers installed by older releases. Keep this URL available
+// so returning browsers can unregister their existing worker.
 self.addEventListener("install", () => {
-  self.skipwaiting();
+  self.skipWaiting();
 });
 
 self.addEventListener("activate", () => {

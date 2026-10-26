@@ -1,5 +1,3 @@
-"use client";
-
 import { Button } from "@/components/ui/button";
 import { updateTrayAssignment } from "@/components/tray-config/actions";
 import { Alert } from "@/components/ui/alert";
