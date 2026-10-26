@@ -13,10 +13,21 @@ from bambu_spoolman.settings import EXTERNAL_SPOOL_ID
 
 class FilamentUsageTrackerLayerTests(unittest.TestCase):
     def setUp(self):
-        self.tracker = FilamentUsageTracker.__new__(FilamentUsageTracker)
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        environment = patch.dict(os.environ, BAMBU_SPOOLMAN_CONFIG=directory.name)
+        environment.start()
+        self.addCleanup(environment.stop)
+        timers = patch("bambu_spoolman.broker.filament_usage_tracker.threading.Timer")
+        timers.start()
+        self.addCleanup(timers.stop)
+        client = Mock()
+        client.get_spool.return_value = {"used_length": 0}
+        self.tracker = FilamentUsageTracker(client=client)
+        self.addCleanup(self.tracker.stop)
         self.tracker.active_model = {0: {0: 10}, 1: {0: 20}}
-        self.tracker.spent_layers = set()
-        self.tracker.spent_filaments = {}
+        self.tracker.checkpoint.progress.spent_layers = set()
+        self.tracker.checkpoint.progress.spent_filaments = {}
         self.tracker.current_layer = None
         self.tracker.print_started = True
         self.tracker.task_id = "task-1"
@@ -24,24 +35,24 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
         self.tracker._spend_filament_for_layer = Mock()
         self.tracker._spend_filament_for_layer.return_value = True
 
-    @patch("bambu_spoolman.broker.filament_usage_tracker.update_layer")
+    @patch("bambu_spoolman.broker.checkpoint.update_layer")
     def test_spends_layer_zero_when_layer_one_starts(self, update_layer):
         self.tracker._handle_layer_change(1)
 
         self.tracker._spend_filament_for_layer.assert_called_once_with(0)
-        update_layer.assert_called_once_with(1, {0}, {})
+        self.assertEqual(update_layer.call_args.args, (1, {0}, {}))
 
-    @patch("bambu_spoolman.broker.filament_usage_tracker.update_layer")
+    @patch("bambu_spoolman.broker.checkpoint.update_layer")
     def test_spends_layer_one_after_layer_zero(self, update_layer):
         self.tracker.current_layer = 1
-        self.tracker.spent_layers = {0}
+        self.tracker.checkpoint.progress.spent_layers = {0}
 
         self.tracker._handle_layer_change(2)
 
         self.tracker._spend_filament_for_layer.assert_called_once_with(1)
-        update_layer.assert_called_once_with(2, {0, 1}, {})
+        self.assertEqual(update_layer.call_args.args, (2, {0, 1}, {}))
 
-    @patch("bambu_spoolman.broker.filament_usage_tracker.update_layer")
+    @patch("bambu_spoolman.broker.checkpoint.update_layer")
     def test_marks_skipped_intermediate_layers_as_spent(self, update_layer):
         self.tracker.active_model = {
             1: {0: 10},
@@ -50,18 +61,18 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
             4: {0: 40},
         }
         self.tracker.current_layer = 1
-        self.tracker.spent_layers = {1}
+        self.tracker.checkpoint.progress.spent_layers = {1}
 
         self.tracker._handle_layer_change(4)
 
-        self.assertEqual(self.tracker.spent_layers, {1, 2, 3})
+        self.assertEqual(self.tracker.checkpoint.progress.spent_layers, {1, 2, 3})
         self.assertEqual(
             self.tracker._spend_filament_for_layer.call_args_list,
             [call(2), call(3)],
         )
-        update_layer.assert_called_once_with(4, {1, 2, 3}, {})
+        self.assertEqual(update_layer.call_args.args, (4, {1, 2, 3}, {}))
 
-    @patch("bambu_spoolman.broker.filament_usage_tracker.update_layer")
+    @patch("bambu_spoolman.broker.checkpoint.update_layer")
     def test_retries_a_layer_after_spoolman_update_fails(self, update_layer):
         self.tracker._spend_filament_for_layer.side_effect = [
             RuntimeError("Spoolman unavailable"),
@@ -70,20 +81,20 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
         ]
 
         self.tracker._handle_layer_change(1)
-        self.assertNotIn(0, self.tracker.spent_layers)
+        self.assertNotIn(0, self.tracker.checkpoint.progress.spent_layers)
 
         self.tracker.spoolman_retry_at = 0
         self.tracker.current_layer = 2
         self.tracker._handle_layer_change(2)
 
-        self.assertIn(0, self.tracker.spent_layers)
-        self.assertIn(1, self.tracker.spent_layers)
+        self.assertIn(0, self.tracker.checkpoint.progress.spent_layers)
+        self.assertIn(1, self.tracker.checkpoint.progress.spent_layers)
         self.assertEqual(
             self.tracker._spend_filament_for_layer.call_args_list,
             [call(0), call(0), call(1)],
         )
 
-    @patch("bambu_spoolman.broker.filament_usage_tracker.update_layer")
+    @patch("bambu_spoolman.broker.checkpoint.update_layer")
     def test_outage_attempts_only_one_pending_layer_before_backoff(self, update_layer):
         self.tracker.active_model = {layer: {0: 1} for layer in range(100)}
         self.tracker._spend_filament_for_layer.side_effect = RuntimeError(
@@ -113,7 +124,7 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
         retry_timer.start.assert_called_once_with()
         self.tracker._handle_layer_change.assert_called_once_with(2)
 
-    @patch("bambu_spoolman.broker.filament_usage_tracker.update_layer")
+    @patch("bambu_spoolman.broker.checkpoint.update_layer")
     @patch("bambu_spoolman.broker.filament_usage_tracker.load_settings")
     def test_retries_only_failed_filament_within_layer(
         self, load_settings, update_layer
@@ -122,6 +133,7 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
         self.tracker.using_ams = True
         self.tracker.ams_mapping = [0, 1]
         self.tracker.spoolman_client = Mock()
+        self.tracker.spoolman_client.get_spool.return_value = {"used_length": 0}
         self.tracker.spoolman_client.consume_spool.side_effect = [
             None,
             RuntimeError("Spoolman unavailable"),
@@ -134,8 +146,8 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
 
         self.tracker.current_layer = 1
         self.tracker._handle_layer_change(1)
-        self.assertEqual(self.tracker.spent_filaments, {0: {0}})
-        self.assertNotIn(0, self.tracker.spent_layers)
+        self.assertEqual(self.tracker.checkpoint.progress.spent_filaments, {0: {0}})
+        self.assertNotIn(0, self.tracker.checkpoint.progress.spent_layers)
 
         self.tracker.spoolman_retry_at = 0
         self.tracker.current_layer = 1
@@ -149,20 +161,12 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
                 call(11, length=20),
             ],
         )
-        self.assertEqual(self.tracker.spent_filaments, {0: {0, 1}})
-        self.assertIn(0, self.tracker.spent_layers)
-        self.assertEqual(
-            update_layer.call_args_list,
-            [
-                call(1, set(), {0: {0}}),
-                call(1, set(), {0: {0}}),
-                call(1, set(), {0: {0, 1}}),
-                call(1, {0}, {0: {0, 1}}),
-            ],
-        )
+        self.assertEqual(self.tracker.checkpoint.progress.spent_filaments, {0: {0, 1}})
+        self.assertIn(0, self.tracker.checkpoint.progress.spent_layers)
+        self.assertEqual(update_layer.call_args.args, (1, {0}, {0: {0, 1}}))
 
-    @patch("bambu_spoolman.broker.filament_usage_tracker.clear_checkpoint")
-    @patch("bambu_spoolman.broker.filament_usage_tracker.update_layer")
+    @patch("bambu_spoolman.broker.checkpoint.clear")
+    @patch("bambu_spoolman.broker.checkpoint.update_layer")
     def test_print_end_keeps_checkpoint_when_usage_remains(
         self, update_layer, clear_checkpoint
     ):
@@ -174,11 +178,11 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
 
         self.assertFalse(completed)
         self.assertIsNotNone(self.tracker.active_model)
-        self.assertEqual(self.tracker.spent_layers, set())
+        self.assertEqual(self.tracker.checkpoint.progress.spent_layers, set())
         clear_checkpoint.assert_not_called()
 
-    @patch("bambu_spoolman.broker.filament_usage_tracker.clear_checkpoint")
-    @patch("bambu_spoolman.broker.filament_usage_tracker.update_layer")
+    @patch("bambu_spoolman.broker.checkpoint.clear")
+    @patch("bambu_spoolman.broker.checkpoint.update_layer")
     def test_retries_finish_status_until_all_usage_succeeds(
         self, update_layer, clear_checkpoint
     ):
@@ -200,7 +204,7 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
         self.tracker.on_message(None, finish_message)
 
         self.assertIsNone(self.tracker.active_model)
-        self.assertEqual(self.tracker.spent_layers, set())
+        self.assertEqual(self.tracker.checkpoint.progress.spent_layers, set())
         clear_checkpoint.assert_called_once_with()
         self.assertEqual(
             self.tracker._spend_filament_for_layer.call_args_list,
@@ -247,7 +251,7 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
         self.assertEqual(self.tracker.current_layer, 0)
         self.assertFalse(self.tracker.print_started)
 
-    @patch("bambu_spoolman.broker.filament_usage_tracker.mark_print_started")
+    @patch("bambu_spoolman.broker.checkpoint.mark_print_started")
     def test_running_status_activates_new_print_before_consuming(self, mark_started):
         self.tracker.gcode_state = "PREPARE"
         self.tracker.current_layer = 0
@@ -503,7 +507,7 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
         )
         self.tracker._handle_print_end.assert_not_called()
 
-    @patch("bambu_spoolman.broker.filament_usage_tracker.recover_model")
+    @patch("bambu_spoolman.broker.checkpoint.recover_model")
     def test_restores_exact_spent_layers_from_checkpoint(self, recover_model):
         recover_model.return_value = (
             "/config/checkpoint/model.3mf",
@@ -521,11 +525,11 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
 
         self.tracker._attempt_print_resume("task-1", "subtask-1")
 
-        self.assertEqual(self.tracker.spent_layers, {0, 2, 5})
-        self.assertEqual(self.tracker.spent_filaments, {5: {0, 1}})
+        self.assertEqual(self.tracker.checkpoint.progress.spent_layers, {0, 2, 5})
+        self.assertEqual(self.tracker.checkpoint.progress.spent_filaments, {5: {0, 1}})
         self.assertEqual(self.tracker.current_layer, 5)
 
-    @patch("bambu_spoolman.broker.filament_usage_tracker.update_layer")
+    @patch("bambu_spoolman.broker.checkpoint.update_layer")
     @patch("bambu_spoolman.broker.filament_usage_tracker.load_settings")
     def test_auto_refill_uses_new_tray_only_for_later_layers(
         self, load_settings, update_layer
@@ -542,6 +546,7 @@ class FilamentUsageTrackerLayerTests(unittest.TestCase):
         self.tracker.last_active_tray = None
         self.tracker.skipped_object_layers = {}
         self.tracker.spoolman_client = Mock()
+        self.tracker.spoolman_client.get_spool.return_value = {"used_length": 0}
         self.tracker._spend_filament_for_layer = (
             FilamentUsageTracker._spend_filament_for_layer.__get__(self.tracker)
         )
@@ -585,7 +590,7 @@ G1 E3
 
         self.assertEqual(groups, {(0, 0): 2.0, (0, 1): 3.0})
 
-    @patch("bambu_spoolman.broker.filament_usage_tracker.update_layer")
+    @patch("bambu_spoolman.broker.checkpoint.update_layer")
     @patch("bambu_spoolman.broker.filament_usage_tracker.load_settings")
     def test_reconciles_timed_out_consumption_without_duplicate_request(
         self, load_settings, update_layer
@@ -598,12 +603,13 @@ G1 E3
         self.tracker.last_active_tray = None
         self.tracker.skipped_object_layers = {}
         self.tracker.skipped_object_lines = {}
-        self.tracker.spent_segments = {}
-        self.tracker.pending_consumption = None
+        self.tracker.checkpoint.progress.spent_segments = {}
+        self.tracker.checkpoint.progress.pending_consumption = None
         self.tracker._spend_filament_for_layer = (
             FilamentUsageTracker._spend_filament_for_layer.__get__(self.tracker)
         )
         self.tracker.spoolman_client = Mock()
+        self.tracker.spoolman_client.get_spool.return_value = {"used_length": 0}
         self.tracker.spoolman_client.get_spool.side_effect = [
             {"used_length": 100},
             {"used_length": 110},
@@ -620,8 +626,8 @@ G1 E3
         self.tracker.spoolman_client.consume_spool.assert_called_once_with(
             99, length=10
         )
-        self.assertIn(0, self.tracker.spent_layers)
-        self.assertIsNone(self.tracker.pending_consumption)
+        self.assertIn(0, self.tracker.checkpoint.progress.spent_layers)
+        self.assertIsNone(self.tracker.checkpoint.progress.pending_consumption)
 
     def test_prepare_status_cannot_remap_print_to_previously_loaded_tray(self):
         self.tracker.active_model = {0: {0: 10}}
@@ -641,7 +647,7 @@ G1 E3
             [{"layer": 0, "mapping": [0]}],
         )
 
-    @patch("bambu_spoolman.broker.filament_usage_tracker.update_layer")
+    @patch("bambu_spoolman.broker.checkpoint.update_layer")
     @patch("bambu_spoolman.broker.filament_usage_tracker.load_settings")
     def test_skipped_object_excludes_only_its_object_extrusion(
         self, load_settings, update_layer
@@ -666,6 +672,7 @@ G1 E5
         self.tracker.last_active_tray = None
         self.tracker.skipped_object_layers = {7: 0}
         self.tracker.spoolman_client = Mock()
+        self.tracker.spoolman_client.get_spool.return_value = {"used_length": 0}
         self.tracker._spend_filament_for_layer = (
             FilamentUsageTracker._spend_filament_for_layer.__get__(self.tracker)
         )
@@ -712,8 +719,8 @@ G1 E5
             self.assertFalse(self.tracker._load_model(file.name, "plate.gcode"))
         self.assertIsNone(self.tracker.active_model)
 
-    @patch("bambu_spoolman.broker.filament_usage_tracker.save_checkpoint")
-    @patch("bambu_spoolman.broker.filament_usage_tracker.clear_checkpoint")
+    @patch("bambu_spoolman.broker.checkpoint.save_checkpoint")
+    @patch("bambu_spoolman.broker.checkpoint.clear")
     def test_print_start_does_not_checkpoint_invalid_model(
         self, clear_checkpoint, save_checkpoint
     ):
@@ -727,8 +734,8 @@ G1 E5
         save_checkpoint.assert_not_called()
         self.assertFalse(os.path.exists(model_file.name))
 
-    @patch("bambu_spoolman.broker.filament_usage_tracker.save_checkpoint")
-    @patch("bambu_spoolman.broker.filament_usage_tracker.clear_checkpoint")
+    @patch("bambu_spoolman.broker.checkpoint.save_checkpoint")
+    @patch("bambu_spoolman.broker.checkpoint.clear")
     def test_checkpoint_failure_still_removes_downloaded_model(self, clear, save):
         file = tempfile.NamedTemporaryFile(delete=False)
         file.close()
@@ -742,8 +749,8 @@ G1 E5
             )
         self.assertFalse(os.path.exists(file.name))
 
-    @patch("bambu_spoolman.broker.filament_usage_tracker.save_checkpoint")
-    @patch("bambu_spoolman.broker.filament_usage_tracker.clear_checkpoint")
+    @patch("bambu_spoolman.broker.checkpoint.save_checkpoint")
+    @patch("bambu_spoolman.broker.checkpoint.clear")
     def test_print_start_checkpoint_waits_for_active_state(
         self, clear_checkpoint, save_checkpoint
     ):

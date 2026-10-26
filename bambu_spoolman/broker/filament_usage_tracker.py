@@ -1,4 +1,3 @@
-import math
 import os
 import re
 import threading
@@ -6,15 +5,7 @@ import time
 
 from loguru import logger
 
-from bambu_spoolman.broker.checkpoint import (
-    clear as clear_checkpoint,
-)
-from bambu_spoolman.broker.checkpoint import (
-    mark_print_started,
-    recover_model,
-    save_checkpoint,
-    update_layer,
-)
+from bambu_spoolman.broker.consumption import ConsumptionDelivery
 from bambu_spoolman.broker.filament_accounting import (
     mapping_at_position,
     plan_layer_usage,
@@ -23,6 +14,7 @@ from bambu_spoolman.broker.model_loader import (
     load_model,
     retrieve_model,
 )
+from bambu_spoolman.broker.print_checkpoint import PrintCheckpoint
 from bambu_spoolman.settings import (
     load_settings,
 )
@@ -39,16 +31,16 @@ MAX_STANDARD_AMS_TRAY = 15
 
 
 class FilamentUsageTracker:
-    def __init__(self):
-        self.spoolman_client = new_client()
+    def __init__(self, client=None):
+        self.spoolman_client = client if client is not None else new_client()
+        self.checkpoint = PrintCheckpoint(self._checkpoint_context)
         self._lock = threading.RLock()
         self._retry_timer = None
         self._retry_generation = 0
         self._stopping = threading.Event()
         self.active_model = None
         self.ams_mapping = None
-        self.spent_layers = set()
-        self.spent_filaments = {}
+        self.checkpoint.reset_progress()
         self.using_ams = False
 
         self.gcode_state = None
@@ -62,8 +54,6 @@ class FilamentUsageTracker:
         self.last_active_tray = None
         self.skipped_object_layers = {}
         self.skipped_object_lines = {}
-        self.spent_segments = {}
-        self.pending_consumption = None
         self._reset_checkpoint_recovery_guard()
         self._reset_spoolman_retry()
 
@@ -226,7 +216,7 @@ class FilamentUsageTracker:
                 )
 
     def _handle_print_start(self, print_obj):
-        clear_checkpoint()
+        self.checkpoint.clear()
         self._reset_checkpoint_recovery_guard()
         model_url = print_obj.get("url")
 
@@ -234,8 +224,7 @@ class FilamentUsageTracker:
         self.ams_mapping = None
         self.current_layer = None
         self.print_started = print_obj.get("gcode_state") in ACTIVE_GCODE_STATES
-        self.spent_layers = set()
-        self.spent_filaments = {}
+        self.checkpoint.reset_progress()
         self.using_ams = False
         self.task_id = _normalize_identifier(print_obj.get("task_id"))
         self.subtask_id = _normalize_identifier(print_obj.get("subtask_id"))
@@ -245,8 +234,6 @@ class FilamentUsageTracker:
         self.last_active_tray = None
         self.skipped_object_layers = {}
         self.skipped_object_lines = {}
-        self.spent_segments = {}
-        self.pending_consumption = None
         self._reset_spoolman_retry()
         logger.info(
             "event=print_announced task_id={} subtask_id={} file={} "
@@ -294,11 +281,8 @@ class FilamentUsageTracker:
             if not self._load_model(model, gcode_file_name):
                 return
 
-            save_checkpoint(
+            self.checkpoint.create(
                 model_path=model,
-                current_layer=0,
-                spent_layers=self.spent_layers,
-                spent_filaments=self.spent_filaments,
                 task_id=print_obj.get("task_id"),
                 subtask_id=print_obj.get("subtask_id"),
                 ams_mapping=self.ams_mapping,
@@ -306,13 +290,6 @@ class FilamentUsageTracker:
                 using_ams=self.using_ams,
                 print_started=self.print_started,
                 print_name=self.print_name,
-                ams_mapping_history=self.ams_mapping_history,
-                active_logical_filament=self.active_logical_filament,
-                last_active_tray=self.last_active_tray,
-                skipped_object_layers=self.skipped_object_layers,
-                skipped_object_lines=self.skipped_object_lines,
-                spent_segments=self.spent_segments,
-                pending_consumption=self.pending_consumption,
             )
 
         finally:
@@ -344,7 +321,8 @@ class FilamentUsageTracker:
         to_spend = set(
             model_layer
             for model_layer in self.active_model
-            if model_layer < layer and model_layer not in self.spent_layers
+            if model_layer < layer
+            and model_layer not in self.checkpoint.progress.spent_layers
         )
         if to_spend:
             logger.info(
@@ -353,7 +331,7 @@ class FilamentUsageTracker:
                 self.task_id,
                 layer,
                 sorted(to_spend),
-                len(self.spent_layers),
+                len(self.checkpoint.progress.spent_layers),
             )
 
         failed = False
@@ -369,13 +347,13 @@ class FilamentUsageTracker:
                 break
 
             if spent:
-                self.spent_layers.add(layer_to_spend)
+                self.checkpoint.progress.spent_layers.add(layer_to_spend)
                 logger.info(
                     "event=layer_accounted task_id={} layer={} accounted_layers={} "
                     "total_layers={}",
                     self.task_id,
                     layer_to_spend,
-                    len(self.spent_layers),
+                    len(self.checkpoint.progress.spent_layers),
                     len(self.active_model),
                 )
             else:
@@ -388,32 +366,18 @@ class FilamentUsageTracker:
             self._reset_spoolman_retry()
         self._save_progress(layer)
 
+    def _checkpoint_context(self):
+        return {
+            "current_layer": self.current_layer,
+            "ams_mapping_history": self.ams_mapping_history,
+            "active_logical_filament": self.active_logical_filament,
+            "last_active_tray": self.last_active_tray,
+            "skipped_object_layers": self.skipped_object_layers,
+            "skipped_object_lines": self.skipped_object_lines,
+        }
+
     def _save_progress(self, fallback_layer=None):
-        checkpoint_layer = (
-            self.current_layer if self.current_layer is not None else fallback_layer
-        )
-        progress = (
-            checkpoint_layer,
-            set(self.spent_layers),
-            {
-                spent_layer: set(filaments)
-                for spent_layer, filaments in self.spent_filaments.items()
-            },
-        )
-        if hasattr(self, "ams_mapping_history"):
-            update_layer(
-                *progress,
-                ams_mapping_history=self.ams_mapping_history,
-                active_logical_filament=getattr(self, "active_logical_filament", None),
-                last_active_tray=getattr(self, "last_active_tray", None),
-                skipped_object_layers=getattr(self, "skipped_object_layers", {}),
-                skipped_object_lines=getattr(self, "skipped_object_lines", {}),
-                spent_segments=getattr(self, "spent_segments", {}),
-                pending_consumption=getattr(self, "pending_consumption", None),
-            )
-        else:
-            # Keep lightweight test/integration instances compatible.
-            update_layer(*progress)
+        self.checkpoint.save(fallback_layer)
 
     def _schedule_spoolman_retry(self, layer, reason):
         if self._is_stopping():
@@ -477,13 +441,15 @@ class FilamentUsageTracker:
 
     def _handle_print_end(self):
         # Spend all layers that haven't already been spent
-        remaining_layers = set(self.active_model or {}) - self.spent_layers
+        remaining_layers = (
+            set(self.active_model or {}) - self.checkpoint.progress.spent_layers
+        )
         logger.info(
             "event=print_finish_received task_id={} subtask_id={} "
             "accounted_layers={} total_layers={} pending_layers={}",
             self.task_id,
             self.subtask_id,
-            len(self.spent_layers),
+            len(self.checkpoint.progress.spent_layers),
             len(self.active_model or {}),
             len(remaining_layers),
         )
@@ -497,7 +463,9 @@ class FilamentUsageTracker:
             # this status update.
             self._handle_layer_change(max(remaining_layers) + 1)
 
-        remaining_layers = set(self.active_model or {}) - self.spent_layers
+        remaining_layers = (
+            set(self.active_model or {}) - self.checkpoint.progress.spent_layers
+        )
         if remaining_layers:
             logger.warning(
                 "Print ended with unspent layers {}. Automatic retry remains scheduled",
@@ -511,8 +479,7 @@ class FilamentUsageTracker:
         total_layers = len(self.active_model or {})
         self.active_model = None
         self.ams_mapping = None
-        self.spent_layers = set()
-        self.spent_filaments = {}
+        self.checkpoint.reset_progress()
         self.using_ams = False
         self.current_layer = None
         self.print_started = False
@@ -524,8 +491,6 @@ class FilamentUsageTracker:
         self.last_active_tray = None
         self.skipped_object_layers = {}
         self.skipped_object_lines = {}
-        self.spent_segments = {}
-        self.pending_consumption = None
         self._reset_spoolman_retry()
 
         # The printer commonly continues sending FINISH deltas after a print
@@ -541,7 +506,7 @@ class FilamentUsageTracker:
             print_name,
         )
 
-        clear_checkpoint()
+        self.checkpoint.clear()
         logger.info(
             "event=print_tracking_complete task_id={} subtask_id={} layers={}",
             task_id,
@@ -557,13 +522,12 @@ class FilamentUsageTracker:
             self.task_id,
             self.subtask_id,
             reason,
-            len(self.spent_layers),
+            len(self.checkpoint.progress.spent_layers),
         )
 
         self.active_model = None
         self.ams_mapping = None
-        self.spent_layers = set()
-        self.spent_filaments = {}
+        self.checkpoint.reset_progress()
         self.using_ams = False
         self.current_layer = None
         self.print_started = False
@@ -575,11 +539,9 @@ class FilamentUsageTracker:
         self.last_active_tray = None
         self.skipped_object_layers = {}
         self.skipped_object_lines = {}
-        self.spent_segments = {}
-        self.pending_consumption = None
         self._reset_spoolman_retry()
 
-        clear_checkpoint()
+        self.checkpoint.clear()
 
     def _spend_filament_for_layer(self, layer):
         if self._is_stopping() or self.active_model is None:
@@ -598,161 +560,15 @@ class FilamentUsageTracker:
         if segment_usage is None:
             return False
 
-        trays = load_settings().get("trays", {})
-        spent_filaments = self.spent_filaments.setdefault(int(layer), set())
-        durable_tracking = hasattr(self, "spent_segments")
-        if durable_tracking:
-            spent_segments = self.spent_segments.setdefault(int(layer), set())
-            self._reconcile_pending_consumption(layer, spent_segments)
-        else:
-            spent_segments = set()
-
-        segment_keys_by_filament = {}
-        for filament, real_mapping in segment_usage:
-            segment_keys_by_filament.setdefault(filament, set()).add(
-                _segment_key(filament, real_mapping)
-            )
-
-        for (filament, real_mapping), usage in segment_usage.items():
-            if self._is_stopping():
-                return False
-            segment_key = _segment_key(filament, real_mapping)
-            if filament in spent_filaments or segment_key in spent_segments:
-                logger.debug(
-                    "Skipping accounted segment {} for layer {}", segment_key, layer
-                )
-                continue
-
-            spoolman_spool = trays.get(str(real_mapping))
-            if spoolman_spool is None:
-                logger.error(
-                    "Failed to find tray {} for filament {}", real_mapping, filament
-                )
-                return False
-
-            if durable_tracking:
-                self._consume_segment_durably(
-                    layer,
-                    filament,
-                    real_mapping,
-                    spoolman_spool,
-                    usage,
-                    segment_key,
-                )
-            else:
-                self.spoolman_client.consume_spool(spoolman_spool, length=usage)
-
-            spent_segments.add(segment_key)
-            pending = getattr(self, "pending_consumption", None)
-            if durable_tracking:
-                self.pending_consumption = None
-            if segment_keys_by_filament[filament].issubset(spent_segments):
-                spent_filaments.add(filament)
-            try:
-                self._save_progress(layer)
-            except Exception:
-                spent_segments.discard(segment_key)
-                if not any(
-                    key in spent_segments for key in segment_keys_by_filament[filament]
-                ):
-                    spent_filaments.discard(filament)
-                if durable_tracking:
-                    self.pending_consumption = pending
-                raise
-
-            logger.info(
-                "event=filament_consumed task_id={} layer={} logical_filament={} "
-                "tray={} spool_id={} length_mm={:.3f}",
-                self.task_id,
-                layer,
-                filament,
-                real_mapping,
-                spoolman_spool,
-                usage,
-            )
-
-        required_segments = {
-            _segment_key(filament, real_mapping)
-            for filament, real_mapping in segment_usage
-            if filament not in spent_filaments
-        }
-        return not required_segments or required_segments.issubset(spent_segments)
-
-    def _consume_segment_durably(
-        self, layer, filament, tray, spool_id, length, segment_key
-    ):
-        if self.pending_consumption is not None:
-            raise RuntimeError("A different consumption intent is still pending")
-
-        spool = self.spoolman_client.get_spool(spool_id)
-        baseline = _spool_used_length(spool)
-        self.pending_consumption = {
-            "layer": int(layer),
-            "filament": int(filament),
-            "tray": tray,
-            "spool_id": spool_id,
-            "length": float(length),
-            "segment_key": segment_key,
-            "baseline_used_length": baseline,
-        }
-        self._save_progress(layer)
-        logger.debug(
-            "event=consumption_intent_saved task_id={} layer={} segment={} "
-            "spool_id={} baseline_used_length={} length_mm={:.3f}",
-            self.task_id,
-            layer,
-            segment_key,
-            spool_id,
-            baseline,
-            length,
+        delivery = ConsumptionDelivery(
+            self.spoolman_client,
+            self.checkpoint,
+            task_id=self.task_id,
+            stopped=self._is_stopping,
         )
-        self.spoolman_client.consume_spool(spool_id, length=length)
-
-    def _reconcile_pending_consumption(self, layer, spent_segments):
-        pending = self.pending_consumption
-        if pending is None:
-            return
-        if int(pending.get("layer", -1)) != int(layer):
-            raise RuntimeError(
-                "Consumption intent belongs to a different pending layer"
-            )
-
-        spool_id = pending.get("spool_id")
-        baseline = float(pending.get("baseline_used_length"))
-        length = float(pending.get("length"))
-        current = _spool_used_length(self.spoolman_client.get_spool(spool_id))
-        target = baseline + length
-        tolerance = max(1e-6, abs(length) * 1e-6)
-        applied = current >= target - tolerance
-        segment_key = str(pending.get("segment_key"))
-        if applied:
-            spent_segments.add(segment_key)
-            logger.info(
-                "event=consumption_intent_reconciled task_id={} layer={} "
-                "segment={} spool_id={} baseline_used_length={} "
-                "current_used_length={} length_mm={:.3f}",
-                self.task_id,
-                layer,
-                segment_key,
-                spool_id,
-                baseline,
-                current,
-                length,
-            )
-        else:
-            logger.info(
-                "event=consumption_intent_not_applied task_id={} layer={} "
-                "segment={} spool_id={} baseline_used_length={} "
-                "current_used_length={}",
-                self.task_id,
-                layer,
-                segment_key,
-                spool_id,
-                baseline,
-                current,
-            )
-        self.pending_consumption = None
-        self._save_progress(layer)
+        return delivery.deliver_layer(
+            layer, segment_usage, load_settings().get("trays", {})
+        )
 
     def _mapping_for_layer(self, layer):
         return self._mapping_for_position(layer)
@@ -932,55 +748,28 @@ class FilamentUsageTracker:
         return True
 
     def _attempt_print_resume(self, task_id, subtask_id, print_name=None):
-        result = recover_model(task_id, subtask_id, print_name)
+        result = self.checkpoint.recover(task_id, subtask_id, print_name)
         if result is None:
             return
-        result = tuple(result) + (None,) * (18 - len(result))
-        (
-            model_path,
-            gcode_file_name,
-            current_layer,
-            spent_layers,
-            spent_filaments,
-            ams_mapping,
-            using_ams,
-            print_started,
-            checkpoint_task_id,
-            checkpoint_subtask_id,
-            checkpoint_print_name,
-            ams_mapping_history,
-            active_logical_filament,
-            last_active_tray,
-            skipped_object_layers,
-            skipped_object_lines,
-            spent_segments,
-            pending_consumption,
-        ) = result[:18]
-
-        self.task_id = checkpoint_task_id
-        self.subtask_id = checkpoint_subtask_id
-        self.print_name = checkpoint_print_name
-        if not self._load_model(model_path, gcode_file_name):
+        self.task_id = result.task_id
+        self.subtask_id = result.subtask_id
+        self.print_name = result.print_name
+        if not self._load_model(result.model_path, result.gcode_file_name):
             return
-        self.spent_layers = set(spent_layers)
-        self.spent_filaments = {
-            layer: set(filaments) for layer, filaments in spent_filaments.items()
-        }
-        self.ams_mapping = ams_mapping
-        self.ams_mapping_history = ams_mapping_history or (
-            [{"layer": 0, "mapping": list(ams_mapping)}] if ams_mapping else []
+        self.checkpoint.progress = result.progress
+        self.ams_mapping = result.ams_mapping
+        self.ams_mapping_history = result.ams_mapping_history or (
+            [{"layer": 0, "mapping": list(result.ams_mapping)}]
+            if result.ams_mapping
+            else []
         )
-        self.active_logical_filament = active_logical_filament
-        self.last_active_tray = last_active_tray
-        self.skipped_object_layers = skipped_object_layers or {}
-        self.skipped_object_lines = skipped_object_lines or {}
-        self.spent_segments = {
-            layer: set(segments) for layer, segments in (spent_segments or {}).items()
-        }
-        self.pending_consumption = pending_consumption
-        self.current_layer = current_layer
-        self.using_ams = using_ams
-        self.print_started = print_started
+        self.active_logical_filament = result.active_logical_filament
+        self.last_active_tray = result.last_active_tray
+        self.skipped_object_layers = result.skipped_object_layers or {}
+        self.skipped_object_lines = result.skipped_object_lines or {}
+        self.current_layer = result.current_layer
+        self.using_ams = result.using_ams
+        self.print_started = result.print_started
         self._reset_spoolman_retry()
         logger.info(
             "event=print_recovered task_id={} subtask_id={} current_layer={} "
@@ -988,7 +777,7 @@ class FilamentUsageTracker:
             self.task_id,
             self.subtask_id,
             self.current_layer,
-            len(self.spent_layers),
+            len(self.checkpoint.progress.spent_layers),
             self.print_started,
             self.using_ams,
         )
@@ -1027,7 +816,7 @@ class FilamentUsageTracker:
         self._last_checkpoint_recovery_key = None
 
     def _mark_print_started(self):
-        mark_print_started()
+        self.checkpoint.mark_started()
         self.print_started = True
         logger.info(
             "event=print_tracking_started task_id={} subtask_id={} state={}",
@@ -1122,19 +911,3 @@ def _normalize_line_number(value):
     except TypeError, ValueError:
         return None
     return line if line > 0 else None
-
-
-def _segment_key(filament, tray):
-    return f"{filament}:{tray}"
-
-
-def _spool_used_length(spool):
-    if not isinstance(spool, dict):
-        raise RuntimeError("Spoolman did not return spool state for reconciliation")
-    try:
-        used_length = float(spool["used_length"])
-    except (KeyError, TypeError, ValueError) as exc:
-        raise RuntimeError("Spoolman spool response has no valid used_length") from exc
-    if not math.isfinite(used_length) or used_length < 0:
-        raise RuntimeError("Spoolman spool used_length is invalid")
-    return used_length
