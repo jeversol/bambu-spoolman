@@ -24,6 +24,9 @@ class HttpApiTests(unittest.IsolatedAsyncioTestCase):
             {"id": 43, "filament": {"name": "PETG"}},
         ]
         self.spoolman = Mock()
+        self.spoolman.endpoint = "http://spoolman.test"
+        self.spoolman.ams_field_name = "ams"
+        self.spoolman.tray_field_name = "tray"
         self.spoolman.get_spools.return_value = self.spools
         self.spoolman.get_spool.side_effect = lambda spool_id: next(
             (value for value in self.spools if value["id"] == int(spool_id)), None
@@ -161,3 +164,11 @@ class HttpApiTests(unittest.IsolatedAsyncioTestCase):
         finally:
             release.set()
             await asyncio.gather(active, *queued)
+
+    async def test_full_location_outbox_rejects_mapping_without_side_effects(self):
+        with patch("bambu_spoolman.location_sync.MAX_PENDING_LOCATIONS", 0):
+            response = await self.assign(0, 42)
+        self.assertEqual(response.status, 503)
+        self.assertIn("Pending Spoolman locations", (await response.json())["error"])
+        self.assertEqual(load_settings()["trays"], {})
+        self.spoolman.set_active_tray.assert_not_called()

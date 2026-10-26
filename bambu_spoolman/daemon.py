@@ -16,6 +16,8 @@ from bambu_spoolman.broker.automatic_spool_switch import AutomaticSpoolSwitch
 from bambu_spoolman.broker.filament_usage_tracker import FilamentUsageTracker
 from bambu_spoolman.build_info import get_build_info
 from bambu_spoolman.http_api import serve as run_http_server
+from bambu_spoolman.location_sync import LocationReconciler
+from bambu_spoolman.spoolman import new_client
 
 
 async def async_main():
@@ -73,9 +75,21 @@ async def async_main():
         loop.call_soon_threadsafe(stopping.set)
 
     mqtt.add_on_failure_callback(mqtt_failed)
-    mqtt.start()
+    locations = LocationReconciler(new_client())
+    mqtt_started = False
+    locations_started = False
+
+    async def join_mqtt():
+        if mqtt_started:
+            await asyncio.to_thread(mqtt.join, 6)
+            if mqtt.message_dispatcher.ident is not None:
+                await asyncio.to_thread(mqtt.message_dispatcher.join, 1)
 
     try:
+        mqtt.start()
+        mqtt_started = True
+        locations.start()
+        locations_started = True
         done, _ = await asyncio.wait(
             {server, stopped}, return_when=asyncio.FIRST_COMPLETED
         )
@@ -88,15 +102,27 @@ async def async_main():
         logger.info("event=container_shutdown_started")
         mqtt.stop()
         usage_tracker.stop()
+        locations.stop()
         server.cancel()
         stopped.cancel()
-        await asyncio.gather(server, stopped, return_exceptions=True)
-        if not await asyncio.to_thread(usage_tracker.close, timeout=30):
+        # Drain independent components concurrently so their bounded waits do
+        # not add up beyond the container's termination grace period.
+        drains = [
+            asyncio.to_thread(usage_tracker.close, timeout=30),
+            asyncio.gather(server, stopped, return_exceptions=True),
+            join_mqtt(),
+        ]
+        if locations_started:
+            drains.append(asyncio.to_thread(locations.join, 1))
+        tracker_closed, *_ = await asyncio.gather(*drains)
+        if not tracker_closed:
             logger.warning("event=tracker_shutdown_pending_background_work")
         else:
             logger.info("event=tracker_shutdown_complete")
-        await asyncio.to_thread(mqtt.join, 6)
-        await asyncio.to_thread(mqtt.message_dispatcher.join, 1)
+        if locations.is_alive():
+            logger.warning("event=spool_location_shutdown_pending")
+        else:
+            logger.info("event=spool_location_shutdown_complete")
         if mqtt.is_alive() or mqtt.message_dispatcher.is_alive():
             logger.warning("event=mqtt_shutdown_pending_background_work")
         for signum in (signal.SIGINT, signal.SIGTERM):

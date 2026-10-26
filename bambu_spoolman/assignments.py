@@ -4,7 +4,8 @@ import asyncio
 
 from loguru import logger
 
-from bambu_spoolman.mapping import serialized_mapping, sync_spool_locations
+from bambu_spoolman.location_sync import stage_spool_locations, sync_spool_locations
+from bambu_spoolman.mapping import serialized_mapping
 from bambu_spoolman.settings import edit_settings
 from bambu_spoolman.spoolman import instance as spoolman_instance
 
@@ -76,6 +77,13 @@ def _assign_spool(tray_id_int, spool_id, client):
             trays.pop(tray_id_int, None)
             trays[tray_id] = spool_id
         settings["trays"] = trays
+        updates = []
+        if validation_error is None:
+            if spool_id != -1:
+                updates.append(spool_id)
+            if old_spool_id is not None and str(old_spool_id) != str(spool_id):
+                updates.append(old_spool_id)
+            stage_spool_locations(settings, client, updates)
 
     if validation_error is not None:
         logger.warning(
@@ -86,19 +94,13 @@ def _assign_spool(tray_id_int, spool_id, client):
         )
         raise AssignmentError(validation_error)
 
-    updates = []
-    if spool_id != -1:
-        ams_num = None if tray_id_int == 255 else (tray_id_int // 4) + 1
-        tray_num = None if tray_id_int == 255 else (tray_id_int % 4) + 1
-        updates.append((spool_id, ams_num, tray_num))
-    if old_spool_id is not None and str(old_spool_id) != str(spool_id):
-        updates.append((old_spool_id, None, None))
     failed = sync_spool_locations(client, updates)
     if failed:
         raise AssignmentError(
             "Tray mapping saved locally, but Spoolman location updates for "
             f"spool IDs {', '.join(map(str, failed))} could not be confirmed. "
-            "Check those spools' location fields in Spoolman.",
+            "Synchronization will retry automatically; refresh before changing "
+            "the mapping again.",
             status=502,
         )
     logger.info(

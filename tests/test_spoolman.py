@@ -181,6 +181,7 @@ class SpoolmanClientTests(unittest.TestCase):
         patch_request.return_value = Mock()
         client = SpoolmanClient("http://spoolman.test/")
         client.get_spool = Mock(return_value={"id": 32, "extra": {}})
+        client.get_info = Mock(return_value={"version": "0.27.0"})
         client.ams_field_name = "ams"
         client.tray_field_name = "tray"
 

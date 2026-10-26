@@ -8,7 +8,7 @@ from bambu_spoolman.daemon import async_main
 
 
 class DaemonShutdownTests(unittest.IsolatedAsyncioTestCase):
-    async def run_service(self, fail=False, mqtt_fail=False):
+    async def run_service(self, fail=False, mqtt_fail=False, startup_failure=None):
         handlers = {}
         order = []
         mqtt = Mock()
@@ -16,6 +16,12 @@ class DaemonShutdownTests(unittest.IsolatedAsyncioTestCase):
         mqtt.is_alive.return_value = False
         mqtt.message_dispatcher.is_alive.return_value = False
         mqtt.stop.side_effect = lambda: order.append("mqtt_stop")
+        locations = Mock()
+        locations.is_alive.return_value = False
+        if startup_failure == "locations":
+            locations.start.side_effect = RuntimeError("worker start failed")
+        elif startup_failure == "mqtt":
+            mqtt.start.side_effect = RuntimeError("worker start failed")
         tracker = Mock()
         tracker.stop.side_effect = lambda: order.append("tracker_stop")
         tracker.close.side_effect = lambda **kwargs: (
@@ -48,6 +54,12 @@ class DaemonShutdownTests(unittest.IsolatedAsyncioTestCase):
             )
             stack.enter_context(
                 patch(
+                    "bambu_spoolman.daemon.LocationReconciler", return_value=locations
+                )
+            )
+            stack.enter_context(patch("bambu_spoolman.daemon.new_client"))
+            stack.enter_context(
+                patch(
                     "bambu_spoolman.daemon.FilamentUsageTracker", return_value=tracker
                 )
             )
@@ -58,7 +70,10 @@ class DaemonShutdownTests(unittest.IsolatedAsyncioTestCase):
             stack.enter_context(
                 patch("bambu_spoolman.daemon.run_http_server", side_effect=server)
             )
-            if mqtt_fail:
+            if startup_failure:
+                with self.assertRaisesRegex(RuntimeError, "worker start failed"):
+                    await asyncio.wait_for(async_main(), 5)
+            elif mqtt_fail:
                 with self.assertRaisesRegex(RuntimeError, "MQTT dispatch failed"):
                     await asyncio.wait_for(async_main(), 5)
             elif fail:
@@ -71,9 +86,22 @@ class DaemonShutdownTests(unittest.IsolatedAsyncioTestCase):
             expected.insert(0, "tracker_stop")
         self.assertEqual(order, expected)
         tracker.close.assert_called_once_with(timeout=30)
+        if startup_failure == "mqtt":
+            locations.start.assert_not_called()
+        else:
+            locations.start.assert_called_once_with()
+        locations.stop.assert_called_once_with()
+        if startup_failure:
+            locations.join.assert_not_called()
+        else:
+            locations.join.assert_called_once_with(1)
         self.assertEqual(remove.call_count, 2)
-        mqtt.join.assert_called_once_with(6)
-        mqtt.message_dispatcher.join.assert_called_once_with(1)
+        if startup_failure == "mqtt":
+            mqtt.join.assert_not_called()
+            mqtt.message_dispatcher.join.assert_not_called()
+        else:
+            mqtt.join.assert_called_once_with(6)
+            mqtt.message_dispatcher.join.assert_called_once_with(1)
 
     async def test_signal_shutdown_closes_tracker_before_joining_mqtt(self):
         await self.run_service()
@@ -95,3 +123,9 @@ class DaemonShutdownTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(RuntimeError, "requires reconciliation"):
                 await async_main()
             mqtt.assert_not_called()
+
+    async def test_location_worker_start_failure_still_closes_runtime(self):
+        await self.run_service(startup_failure="locations")
+
+    async def test_mqtt_start_failure_never_joins_unstarted_threads(self):
+        await self.run_service(startup_failure="mqtt")

@@ -49,8 +49,8 @@ checkpoints in a persistent volume.
 | `SPOOLMAN_VERIFY` | Set to `false` to disable TLS certificate verification for Spoolman. |
 | `SPOOLMAN_RFID_FIELD_KEY` | Legacy RFID mapping field key for Spoolman older than v0.27.0; see below. |
 | `SPOOLMAN_AUTO_CREATE_SPOOLS` | Set to `true` to create spools for unknown Bambu RFID tags. Requires Spoolman v0.27.0+ or `SPOOLMAN_RFID_FIELD_KEY`. |
-| `SPOOLMAN_AMS_FIELD_NAME` | Spoolman custom field for the AMS index. |
-| `SPOOLMAN_TRAY_FIELD_NAME` | Spoolman custom field for the tray index. |
+| `SPOOLMAN_AMS_FIELD_NAME` | Spoolman v0.25+ custom field for the AMS index; failed updates retry durably. |
+| `SPOOLMAN_TRAY_FIELD_NAME` | Spoolman v0.25+ custom field for the tray index; failed updates retry durably. |
 
 ### RFID mapping
 

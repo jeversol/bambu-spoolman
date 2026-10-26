@@ -3,10 +3,14 @@ import os
 from loguru import logger
 
 from bambu_spoolman.bambu_mqtt import stateful_printer_info
+from bambu_spoolman.location_sync import (
+    LocationQueueFull,
+    stage_spool_locations,
+    sync_spool_locations,
+)
 from bambu_spoolman.mapping import (
     mapping_lock,
     serialized_mapping,
-    sync_spool_locations,
 )
 from bambu_spoolman.settings import edit_settings, load_settings
 from bambu_spoolman.spoolman import new_client
@@ -45,7 +49,12 @@ class AutomaticSpoolSwitch:
             # first and contains the merged AMS snapshot; operating on the raw
             # message can otherwise mistake omitted trays for removed trays.
             merged_print = stateful_printer_info.get_info().get("print", {})
-            self._sync_trays(merged_print)
+            try:
+                self._sync_trays(merged_print)
+            except LocationQueueFull:
+                # Continuing with an old tray mapping after a physical spool
+                # change would charge later extrusion to the wrong spool.
+                _mqtt_handler.fail_dispatch("Spoolman location backlog is full")
 
     def sync(self):
         with self._lock:
@@ -301,18 +310,12 @@ class AutomaticSpoolSwitch:
                 if str(value) not in displaced
             }
             settings["locked_trays"] = sorted(locked | {tray_id})
+            updates = [spool_id]
+            if old_spool_id is not None and str(old_spool_id) != str(spool_id):
+                updates.append(old_spool_id)
+            stage_spool_locations(settings, self.spoolman_client, updates)
         logger.info("event=tray_mapping_locked tray={} spool_id={}", tray_id, spool_id)
 
-        # Set active tray in Spoolman
-        # tray_id is ams_id * 4 + tray_slot_id (both are 0-indexed internally).
-        # So we need to reverse it to get ams_id and tray_slot_id
-        # Both AMS and tray should be 1-indexed for display (1-4)
-        ams_num = (tray_id // 4) + 1
-        tray_num = (tray_id % 4) + 1
-
-        updates = [(spool_id, ams_num, tray_num)]
-        if old_spool_id is not None and str(old_spool_id) != str(spool_id):
-            updates.append((old_spool_id, None, None))
         sync_spool_locations(self.spoolman_client, updates)
 
     @serialized_mapping
@@ -337,6 +340,8 @@ class AutomaticSpoolSwitch:
                 trays.pop(str(tray_id), None)
                 trays.pop(tray_id, None)
                 settings["trays"] = trays
+                if spool_id is not None:
+                    stage_spool_locations(settings, self.spoolman_client, [spool_id])
         logger.info(
             "event=tray_mapping_unlocked tray={} clear={} spool_id={} "
             "remaining_locked={}",
@@ -348,4 +353,4 @@ class AutomaticSpoolSwitch:
 
         # Clear the tray fields in Spoolman if we're clearing the local mapping
         if clear and spool_id is not None:
-            sync_spool_locations(self.spoolman_client, [(spool_id, None, None)])
+            sync_spool_locations(self.spoolman_client, [spool_id])
