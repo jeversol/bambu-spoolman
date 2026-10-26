@@ -394,7 +394,7 @@ class MqttHandler(threading.Thread):
     def add_on_failure_callback(self, callback):
         self.callbacks["on_failure"].append(callback)
 
-    def _fail_dispatch(self, reason):
+    def fail_dispatch(self, reason):
         with self._failure_lock:
             if self.failure is not None:
                 return
@@ -454,7 +454,7 @@ class MqttHandler(threading.Thread):
             return
         payload_bytes = len(msg.payload)
         if payload_bytes > self.max_payload_bytes:
-            self._fail_dispatch("payload byte limit exceeded")
+            self.fail_dispatch("payload byte limit exceeded")
             return
         logger.trace("MQTT topic={} payload={}", msg.topic, msg.payload)
         try:
@@ -499,7 +499,7 @@ class MqttHandler(threading.Thread):
                 else:
                     self._queued_bytes += payload_bytes
         if overflow:
-            self._fail_dispatch("queued message or byte limit exceeded")
+            self.fail_dispatch("queued message or byte limit exceeded")
             return
         queue_depth = self.message_queue.qsize()
         if queue_depth >= 10 and queue_depth % 10 == 0:
@@ -568,7 +568,7 @@ class MqttHandler(threading.Thread):
             len(message.encode() if isinstance(message, str) else message)
             > self.max_payload_bytes
         ):
-            self._fail_dispatch("outbound payload byte limit exceeded")
+            self.fail_dispatch("outbound payload byte limit exceeded")
             return
         overflow = False
         with self.pending_messages_lock:
@@ -589,7 +589,7 @@ class MqttHandler(threading.Thread):
                     )
                     return
         if overflow:
-            self._fail_dispatch("outbound pending message limit exceeded")
+            self.fail_dispatch("outbound pending message limit exceeded")
             return
 
         result = self.client.publish(f"device/{self.printer_serial}/request", message)

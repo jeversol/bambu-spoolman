@@ -29,6 +29,7 @@ class SpoolmanClient:
         self._external_filaments_cache = None
         self._external_filaments_cache_time = None
         self._supports_native_tags = None
+        self._supports_partial_extra = None
         self.ams_field_name = os.environ.get("SPOOLMAN_AMS_FIELD_NAME")
         self.tray_field_name = os.environ.get("SPOOLMAN_TRAY_FIELD_NAME")
 
@@ -393,13 +394,20 @@ class SpoolmanClient:
             )
             return False
 
-        existing_spool = self.get_spool(spool_id)
-        if existing_spool is None:
-            logger.warning(f"Spool {spool_id} not found, cannot set tray fields")
+        if self._supports_partial_extra is not True:
+            version = str(self.get_info().get("version", ""))
+            match = re.match(r"^v?(\d+)\.(\d+)\.(\d+)", version)
+            self._supports_partial_extra = bool(
+                match and tuple(map(int, match.groups())) >= (0, 25, 0)
+            )
+        if not self._supports_partial_extra:
+            logger.error("Location fields require Spoolman v0.25.0+")
             return False
 
-        # Get extra data
-        extra = existing_spool.get("extra", {})
+        # Partial extra-field PATCH is supported by our minimum location-sync
+        # version. Sending a stale copy of every field can overwrite another
+        # client's RFID or other metadata during an automatic retry.
+        extra = {}
 
         # Set or clear the AMS field
         if self.ams_field_name:

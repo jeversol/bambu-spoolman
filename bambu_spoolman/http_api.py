@@ -14,6 +14,7 @@ from loguru import logger
 from bambu_spoolman.admission import MutationAdmission
 from bambu_spoolman.assignments import AssignmentError, assign_spool
 from bambu_spoolman.bambu_mqtt import stateful_printer_info
+from bambu_spoolman.location_sync import LocationQueueFull
 from bambu_spoolman.rfid import (
     RfidError,
     override_rfid,
@@ -53,7 +54,7 @@ async def errors(request, handler):
                 ):
                     raise web.HTTPForbidden(reason="Foreign browser origin")
         response = await handler(request)
-    except (AssignmentError, RfidError) as error:
+    except (AssignmentError, RfidError, LocationQueueFull) as error:
         response = web.json_response({"error": str(error)}, status=error.status)
     except requests.RequestException:
         logger.exception("event=http_spoolman_unavailable")

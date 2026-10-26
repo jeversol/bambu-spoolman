@@ -176,21 +176,64 @@ the replaced spool's optional location fields. The settings file mutex is held
 only for local edits; settings/status reads do not acquire the mapping lock or
 wait for network I/O while holding the file mutex.
 
-Local mappings remain authoritative. Optional location fields disabled in
-Spoolman are a successful no-op. If configured location updates fail, all affected
-updates are still attempted; manual assignment returns 502 describing the saved
-local mapping and affected spool IDs. The operator can inspect/correct those
-location fields in Spoolman. Automatic updates log unconfirmed locations. There
-is no rollback or automatic retry: a timed-out write may already have applied,
-and an old spool's failed cleanup is not guaranteed to recover by resubmitting the
-new assignment. Durable metadata reconciliation remains separate work.
+Local mappings remain authoritative. Mapping changes and their desired optional
+Spoolman locations are saved in the same atomic settings transaction as
+`pending_spool_locations`. Each spool has at most one intent; a new assignment
+supersedes an older clear. Both the new assignment and the displaced spool's
+cleanup are recorded before sending any location write. Confirmed writes remove
+their intents; failures, timeouts, process interruption and failed acknowledgment
+leave work available after restart. Manual assignment still returns 502 when a
+location update cannot be confirmed, describing the saved mapping and automatic
+retry. Do not replay the entire mapping operation merely to retry metadata.
+
+A dedicated daemon thread retries up to eight due intents per pass, at startup
+and every 30 seconds. Per-spool failure backoff grows from 30 to 300 seconds;
+earliest due work goes first. This worker occupies no API executor threads and
+uses the shared mapping lock around each remote attempt, rereading the latest
+mapping before sending. Pending work is capped at 1024 distinct spools; capacity
+exhaustion rejects a new mapping transaction before saving it (HTTP 503 for API
+writes). If a physical MQTT spool change hits this limit, dispatch stops with
+the persistent MQTT reconciliation fault described below: continuing with an
+old mapping would charge later extrusion to the wrong spool. Restore metadata
+synchronization and reconcile the physical/accounting gap before acknowledging
+that fault. Restore synchronization before creating more distinct pending work.
+
+Intents include a fingerprint of the endpoint and configured location field
+names, without storing endpoint credentials. If these change, old intents stay
+pending and log `spool_location_scope_mismatch`; they are not sent to a different
+server/field configuration. With the service stopped, inspect pending entries
+and reconcile their old targets before removing obsolete entries or restoring
+the original configuration. A new mapping operation for the same spool stages
+a new intent for the current configuration. The outbox does not migrate IDs or
+clean up fields on an old server automatically.
+
+Location fields require Spoolman v0.25.0+ with partial extra-field PATCH support
+([upstream change](https://github.com/Donkie/Spoolman/pull/639)). Only configured
+AMS/tray fields are sent, preserving unrelated metadata. Unsupported or unknown
+server versions leave configured location work pending. Disabling both optional
+fields remains a successful no-op for new operations; old intents from another
+configuration still require review. This minimum applies to location fields,
+not basic filament tracking or the legacy RFID integration.
+
+These metadata writes are idempotent desired-state updates, not filament
+consumption increments or RFID association retries. This application owns the
+configured AMS/tray fields for pending reconciliation; competing writers of
+those same fields need an explicit ownership policy. No distributed transaction,
+remote ordering guarantee after a timed-out request, or continuous drift repair
+is claimed. Existing historical failures from before the outbox was introduced
+cannot be reconstructed automatically. Inspect/correct those old fields manually.
 
 This coordinates writes in the supported single Python process. It does not lock
-physical printer changes, other Spoolman clients, filament-consumption totals or
-multiple application replicas. Backlog/admission limits and external concurrent
-consumption reconciliation remain subsequent backend work.
+physical printer changes, other Spoolman clients, consumption totals or multiple
+application replicas. Consumption/checkpoint ownership and external concurrent
+usage reconciliation remain subsequent backend work.
 
 ## Tracker shutdown and retry ownership
+
+The metadata reconciler is stopped alongside MQTT and the tracker. Its bounded
+join runs concurrently with HTTP/tracker/MQTT drain waits so their budgets do
+not accumulate past the container grace period. A pending remote attempt is
+logged explicitly and its unacknowledged intent stays on disk.
 
 `FilamentUsageTracker.stop()` rejects new messages/segments and cancels a pending
 retry immediately. Retry callbacks carry an identifier, checked under the tracker

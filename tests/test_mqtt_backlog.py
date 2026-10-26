@@ -192,7 +192,7 @@ class MqttBacklogTests(unittest.TestCase):
             ),
             patch("bambu_spoolman.bambu_mqtt.logger.exception") as log,
         ):
-            self.handler._fail_dispatch("test failure")
+            self.handler.fail_dispatch("test failure")
         failure.assert_called_once_with(self.handler)
         self.assertTrue(self.handler._shutdown_requested.is_set())
         log.assert_called_once_with("event=mqtt_dispatch_fault_persistence_failed")

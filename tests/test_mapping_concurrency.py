@@ -26,6 +26,9 @@ class MappingConcurrencyTests(unittest.IsolatedAsyncioTestCase):
         self.locations = {42: (1, 1)}
         self.order = []
         self.spoolman = Mock()
+        self.spoolman.endpoint = "http://spoolman.test"
+        self.spoolman.ams_field_name = "ams"
+        self.spoolman.tray_field_name = "tray"
         self.spoolman.ams_field_name = "ams"
         self.spoolman.tray_field_name = "tray"
         self.spoolman.get_spool.side_effect = lambda spool: {"id": spool}

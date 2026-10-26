@@ -55,6 +55,9 @@ class AutomaticSpoolSwitchOverrideTests(unittest.TestCase):
         new_client = client_patch.start()
         self.addCleanup(client_patch.stop)
         self.client = Mock()
+        self.client.endpoint = "http://spoolman.test"
+        self.client.ams_field_name = "ams"
+        self.client.tray_field_name = "tray"
         new_client.return_value = self.client
         self.switch = AutomaticSpoolSwitch()
 
