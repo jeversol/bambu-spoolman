@@ -17,6 +17,7 @@ import { parseSpool, type Spool } from "./spool-model";
 import type { Settings } from "./settings";
 import type { PrinterStatus } from "./types";
 import { Button } from "@/components/ui/button";
+import { AccountingNotice } from "@/components/AccountingNotice";
 
 type ApplicationData = {
   settings: Settings;
@@ -80,6 +81,7 @@ function ApplicationBoundary({ children }: { children: ReactNode }) {
   });
   return (
     <>
+      <AccountingNotice />
       {query.error && (
         <div role="alert" className="mx-auto max-w-6xl p-4 text-destructive">
           Could not refresh application data: {query.error.message}{" "}

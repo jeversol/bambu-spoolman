@@ -4,6 +4,7 @@ from typing import NamedTuple, Protocol, TypedDict
 
 from bambu_spoolman.broker import checkpoint
 from bambu_spoolman.broker.consumption import ConsumptionProgress
+from bambu_spoolman.broker.consumption_state import is_blocked
 
 
 class CheckpointContext(TypedDict):
@@ -57,6 +58,18 @@ class PrintCheckpoint:
         self.context = context
         self.progress = ConsumptionProgress()
 
+    def has_blocked_consumption(self, endpoint):
+        pending = self.progress.pending_consumption
+        if pending is None:
+            pending = checkpoint.get_checkpoint_metadata().get("pending_consumption")
+        return is_blocked(pending, endpoint)
+
+    def saved_pending_journal(self):
+        metadata = checkpoint.get_checkpoint_metadata()
+        if metadata.get("pending_consumption") is None:
+            return None
+        return SavedConsumptionJournal(metadata)
+
     def reset_progress(self):
         self.progress = ConsumptionProgress()
 
@@ -108,3 +121,35 @@ class PrintCheckpoint:
 
     def clear(self):
         checkpoint.clear()
+
+
+class SavedConsumptionJournal:
+    """Settle a saved intent before loading/replacing a print, retaining its context."""
+
+    def __init__(self, metadata):
+        self.progress = ConsumptionProgress(
+            set(metadata.get("spent_layers", [])),
+            {
+                int(layer): set(values)
+                for layer, values in metadata.get("spent_filaments", {}).items()
+            },
+            {
+                int(layer): set(values)
+                for layer, values in metadata.get("spent_segments", {}).items()
+            },
+            metadata["pending_consumption"],
+        )
+
+    def save(self, fallback_layer=None):
+        # The runtime file lease and tracker lock exclude other writers. Reload
+        # context so this acknowledgment never resets model/identity/history.
+        metadata = checkpoint.get_checkpoint_metadata()
+        checkpoint.update_layer(
+            metadata.get("current_layer", fallback_layer),
+            self.progress.spent_layers,
+            self.progress.spent_filaments,
+            active_logical_filament=metadata.get("active_logical_filament"),
+            last_active_tray=metadata.get("last_active_tray"),
+            spent_segments=self.progress.spent_segments,
+            pending_consumption=self.progress.pending_consumption,
+        )

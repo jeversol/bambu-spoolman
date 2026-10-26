@@ -20,6 +20,7 @@ class TrackerShutdownTests(unittest.TestCase):
     def make_tracker(self):
         with patch("bambu_spoolman.broker.filament_usage_tracker.new_client"):
             tracker = FilamentUsageTracker()
+        tracker.spoolman_client.endpoint = "http://spoolman.test"
         self.addCleanup(tracker.stop)
         return tracker
 

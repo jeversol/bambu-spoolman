@@ -6,6 +6,7 @@ import time
 from loguru import logger
 
 from bambu_spoolman.broker.consumption import ConsumptionDelivery
+from bambu_spoolman.broker.consumption_state import AmbiguousConsumption
 from bambu_spoolman.broker.filament_accounting import (
     mapping_at_position,
     plan_layer_usage,
@@ -56,6 +57,49 @@ class FilamentUsageTracker:
         self.skipped_object_lines = {}
         self._reset_checkpoint_recovery_guard()
         self._reset_spoolman_retry()
+        self._accounting_blocked = self.checkpoint.has_blocked_consumption(
+            self.spoolman_client.endpoint
+        )
+        if self._accounting_blocked:
+            logger.critical(
+                "event=consumption_recovery_required action=preserve_checkpoint"
+            )
+
+    def _accounting_paused(self):
+        if self._accounting_blocked:
+            return True
+        if self.checkpoint.has_blocked_consumption(self.spoolman_client.endpoint):
+            self._pause_accounting()
+            return True
+        # Resolve known/authorized work before a print transition can erase it.
+        # Before model recovery, use a journal retaining the saved print context.
+        journal = (
+            self.checkpoint if self.checkpoint.progress.pending_consumption else None
+        )
+        if journal is None and self.active_model is None:
+            journal = self.checkpoint.saved_pending_journal()
+        if journal is not None:
+            try:
+                return not ConsumptionDelivery(
+                    self.spoolman_client,
+                    journal,
+                    task_id=self.task_id,
+                    stopped=self._is_stopping,
+                ).settle_pending()
+            except AmbiguousConsumption:
+                self._pause_accounting()
+                return True
+            except Exception:
+                logger.exception("event=consumption_recovery_persistence_pending")
+                return True
+        return False
+
+    def _pause_accounting(self):
+        self._accounting_blocked = True
+        self._reset_spoolman_retry()
+        logger.critical(
+            "event=consumption_recovery_required action=preserve_checkpoint"
+        )
 
     def _is_stopping(self):
         stopping = getattr(self, "_stopping", None)
@@ -101,6 +145,8 @@ class FilamentUsageTracker:
                 return self._on_message(mqtt_handler, message)
 
     def _on_message(self, mqtt_handler, message):
+        if self._accounting_paused():
+            return False
         print_obj = message.get("print", {})
         command = print_obj.get("command")
 
@@ -216,6 +262,8 @@ class FilamentUsageTracker:
                 )
 
     def _handle_print_start(self, print_obj):
+        if self._accounting_paused():
+            return False
         self.checkpoint.clear()
         self._reset_checkpoint_recovery_guard()
         model_url = print_obj.get("url")
@@ -299,6 +347,8 @@ class FilamentUsageTracker:
         return retrieve_model(model_url)
 
     def _handle_layer_change(self, layer):
+        if self._accounting_paused():
+            return False
         if self.active_model is None:
             logger.debug("Skipping layer change because no model is loaded")
             return
@@ -338,6 +388,10 @@ class FilamentUsageTracker:
         for layer_to_spend in sorted(to_spend):
             try:
                 spent = self._spend_filament_for_layer(layer_to_spend)
+            except AmbiguousConsumption:
+                self._pause_accounting()
+                self._save_progress(layer)
+                return
             except Exception as e:
                 logger.error(
                     "Failed to spend filament for layer {}: {}", layer_to_spend, e
@@ -440,6 +494,8 @@ class FilamentUsageTracker:
                 self._handle_layer_change(self.current_layer)
 
     def _handle_print_end(self):
+        if self._accounting_paused():
+            return False
         # Spend all layers that haven't already been spent
         remaining_layers = (
             set(self.active_model or {}) - self.checkpoint.progress.spent_layers
@@ -516,6 +572,8 @@ class FilamentUsageTracker:
         return True
 
     def _handle_print_failure(self, reason="unknown"):
+        if self._accounting_paused():
+            return False
         logger.warning(
             "event=print_tracking_stopped task_id={} subtask_id={} reason={} "
             "accounted_layers={}",

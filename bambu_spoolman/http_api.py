@@ -14,6 +14,7 @@ from loguru import logger
 from bambu_spoolman.admission import MutationAdmission
 from bambu_spoolman.assignments import AssignmentError, assign_spool
 from bambu_spoolman.bambu_mqtt import stateful_printer_info
+from bambu_spoolman.broker.consumption_recovery import accounting_status
 from bambu_spoolman.location_sync import LocationQueueFull
 from bambu_spoolman.rfid import (
     RfidError,
@@ -79,6 +80,11 @@ async def settings(request):
             "lockedTrays": value.get("locked_trays", []),
         }
     )
+
+
+async def accounting(request):
+    value = await asyncio.to_thread(accounting_status, request.app[CLIENT].endpoint)
+    return web.json_response(value)
 
 
 async def spools(request):
@@ -237,6 +243,7 @@ def create_app(client=None, switch=None, printer=None, static_dir=None):
     app.add_routes(
         [
             web.get("/api/v1/settings", settings),
+            web.get("/api/v1/accounting", accounting),
             web.get("/api/v1/printer", printer_status),
             web.get("/api/v1/info", info),
             web.put(r"/api/v1/spools/{spool_id:\d+}/rfid", rfid_link),

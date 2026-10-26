@@ -1,10 +1,19 @@
 """Journaled consumption delivery, independent of MQTT and model loading."""
 
 import math
+import uuid
 from dataclasses import dataclass, field
 from typing import Protocol
 
 from loguru import logger
+
+from bambu_spoolman.broker.consumption_state import (
+    AmbiguousConsumption,
+    endpoint_scope,
+    forget_observation,
+    is_blocked,
+    observing_request,
+)
 
 
 @dataclass
@@ -22,6 +31,8 @@ class ConsumptionJournal(Protocol):
 
 
 class ConsumptionClient(Protocol):
+    endpoint: str
+
     def get_spool(self, spool_id): ...
 
     def consume_spool(self, spool_id, *, length): ...
@@ -40,6 +51,16 @@ class ConsumptionDelivery:
         self.journal = journal
         self.task_id = task_id
         self.stopped = stopped
+
+    def settle_pending(self):
+        if self.stopped():
+            return False
+        pending = self.journal.progress.pending_consumption
+        if pending is not None:
+            layer = int(pending["layer"])
+            segments = self.journal.progress.spent_segments.setdefault(layer, set())
+            self._reconcile_pending_consumption(layer, segments)
+        return True
 
     def deliver_layer(self, layer, segment_usage, trays):
         if self.stopped():
@@ -91,6 +112,7 @@ class ConsumptionDelivery:
                 self.journal.progress.pending_consumption = pending
                 raise
 
+            forget_observation(pending)
             logger.info(
                 "event=filament_consumed task_id={} layer={} logical_filament={} "
                 "tray={} spool_id={} length_mm={:.3f}",
@@ -118,6 +140,9 @@ class ConsumptionDelivery:
         spool = self.client.get_spool(spool_id)
         baseline = _spool_used_length(spool)
         self.journal.progress.pending_consumption = {
+            "request_id": uuid.uuid4().hex,
+            "delivery_state": "prepared",
+            "endpoint_scope": endpoint_scope(self.client.endpoint),
             "layer": int(layer),
             "filament": int(filament),
             "tray": tray,
@@ -137,52 +162,46 @@ class ConsumptionDelivery:
             baseline,
             length,
         )
-        self.client.consume_spool(spool_id, length=length)
+        self._send_pending(layer)
+
+    def _send_pending(self, layer):
+        pending = self.journal.progress.pending_consumption
+        if pending.get("endpoint_scope") != endpoint_scope(self.client.endpoint):
+            raise AmbiguousConsumption()
+        with observing_request(pending):
+            pending["delivery_state"] = "in_flight"
+            try:
+                self.journal.save(layer)
+            except Exception:
+                # No request has been issued. Keep that fact in memory so a later
+                # successful save/retry need not invent an uncertain outcome.
+                pending["delivery_state"] = "prepared"
+                raise
+            try:
+                self.client.consume_spool(pending["spool_id"], length=pending["length"])
+            except Exception as error:
+                raise AmbiguousConsumption() from error
+            # This process observed success. If final acknowledgment persistence
+            # fails, retries can persist that fact without incrementing usage again.
+            pending["delivery_state"] = "confirmed"
 
     def _reconcile_pending_consumption(self, layer, spent_segments):
         pending = self.journal.progress.pending_consumption
         if pending is None:
             return
+        if is_blocked(pending, self.client.endpoint):
+            raise AmbiguousConsumption()
         if int(pending.get("layer", -1)) != int(layer):
             raise RuntimeError(
                 "Consumption intent belongs to a different pending layer"
             )
-
-        spool_id = pending.get("spool_id")
-        baseline = float(pending.get("baseline_used_length"))
-        length = float(pending.get("length"))
-        current = _spool_used_length(self.client.get_spool(spool_id))
-        target = baseline + length
-        tolerance = max(1e-6, abs(length) * 1e-6)
-        applied = current >= target - tolerance
-        segment_key = str(pending.get("segment_key"))
+        if pending["delivery_state"] == "prepared":
+            # Only never-issued or explicitly operator-authorized work reaches
+            # this path. Use its ORIGINAL spool, even if tray assignments moved.
+            self._send_pending(layer)
+        segment_key = str(pending["segment_key"])
         was_spent = segment_key in spent_segments
-        if applied:
-            spent_segments.add(segment_key)
-            logger.info(
-                "event=consumption_intent_reconciled task_id={} layer={} "
-                "segment={} spool_id={} baseline_used_length={} "
-                "current_used_length={} length_mm={:.3f}",
-                self.task_id,
-                layer,
-                segment_key,
-                spool_id,
-                baseline,
-                current,
-                length,
-            )
-        else:
-            logger.info(
-                "event=consumption_intent_not_applied task_id={} layer={} "
-                "segment={} spool_id={} baseline_used_length={} "
-                "current_used_length={}",
-                self.task_id,
-                layer,
-                segment_key,
-                spool_id,
-                baseline,
-                current,
-            )
+        spent_segments.add(segment_key)
         self.journal.progress.pending_consumption = None
         try:
             self.journal.save(layer)
@@ -191,6 +210,7 @@ class ConsumptionDelivery:
             if not was_spent:
                 spent_segments.discard(segment_key)
             raise
+        forget_observation(pending)
 
 
 def _segment_key(filament, tray):
