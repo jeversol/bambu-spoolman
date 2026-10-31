@@ -70,7 +70,7 @@ RUN .venv/bin/python -m unittest discover -s tests \
 # Node is a build/audit tool only; production runs Python and static assets.
 FROM runtime_base AS frontend_toolchain
 
-RUN apk add --no-cache nodejs=24.22.1-r0 npm=11.12.1-r0
+RUN apk add --no-cache nodejs=24.22.1-r1 npm=11.12.1-r0
 
 COPY frontend/package.json /app/frontend/package.json
 RUN pnpm_version=$(node -p "require('/app/frontend/package.json').packageManager.split('@')[1]") \
