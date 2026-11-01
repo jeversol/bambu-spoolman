@@ -152,14 +152,14 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           BASELINE_OUTCOME: ${{ steps.baseline.outcome }}
         run: |
-          args=()
+          set --
           if [ "$EVENT_NAME" = pull_request ] && [ "$BASELINE_OUTCOME" = success ]; then
-            args+=(--baseline "$RUNNER_TEMP/security-reports/baseline.json")
+            set -- --baseline "$RUNNER_TEMP/security-reports/baseline.json"
           elif [ "$EVENT_NAME" = pull_request ]; then
             echo 'Baseline image unavailable; enforcing the absolute candidate vulnerability gate.' >> "$GITHUB_STEP_SUMMARY"
           fi
           python3 scripts/compare_image_vulnerabilities.py \
-            "$RUNNER_TEMP/security-reports/candidate.json" "${args[@]}" \
+            "$RUNNER_TEMP/security-reports/candidate.json" "$@" \
             --summary "$GITHUB_STEP_SUMMARY"
       - name: Retain vulnerability reports even when the gate fails
         if: always()

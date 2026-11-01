@@ -33,7 +33,7 @@ class ImageSecurityWorkflowTests(unittest.TestCase):
                 (reports / "baseline.json").write_text(json.dumps(baseline))
             summary = folder / "summary.md"
             result = subprocess.run(
-                ["bash", "-e", "-c", textwrap.dedent(command[1])],
+                ["sh", "-e", "-c", textwrap.dedent(command[1])],
                 cwd=ROOT,
                 env={
                     **os.environ,
