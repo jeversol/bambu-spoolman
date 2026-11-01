@@ -1,6 +1,6 @@
 FROM ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d18028f0cea8eda93bc9986d0 AS uv
 
-FROM python:3.14-alpine3.24@sha256:eb2c62658b8d51bff0acc408504b76521d02030de56a8a3c1e830083e89b89d2 AS python_base
+FROM python:3.14-slim-trixie@sha256:cd89c30eda26ee911a4611b18680086e0ea42e6f5f8cbe653d07fa7958c9cec8 AS python_base
 
 WORKDIR /app
 
@@ -10,11 +10,13 @@ COPY --from=uv /uv /uvx /bin/
 
 FROM python_base AS runtime_base
 
-RUN apk add --no-cache \
-        'libuuid>=2.42.3-r0' \
-        su-exec=0.3-r0 \
-    && addgroup -S -g 10001 bambu-spoolman \
-    && adduser -S -D -H -u 10001 -G bambu-spoolman bambu-spoolman \
+# Use the base release's maintained packages, without exact repository revisions.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libuuid1 gosu \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 bambu-spoolman \
+    && useradd --uid 10001 --gid 10001 --no-create-home \
+        --home-dir /nonexistent --shell /usr/sbin/nologin bambu-spoolman \
     && mkdir -p /config \
     && chown 10001:10001 /config \
     && rm -rf \
@@ -68,9 +70,9 @@ RUN .venv/bin/python -m unittest discover -s tests \
 
 
 # Node is a build/audit tool only; production runs Python and static assets.
-FROM runtime_base AS frontend_toolchain
+FROM node:24-trixie-slim@sha256:54f84b4cf8432b21aaffd5d3ce8d41e12cea0d10d33c09d2f3c9879d49d6b446 AS frontend_toolchain
 
-RUN apk add --no-cache nodejs=24.22.1-r0 npm=11.12.1-r0
+WORKDIR /app
 
 COPY frontend/package.json /app/frontend/package.json
 RUN pnpm_version=$(node -p "require('/app/frontend/package.json').packageManager.split('@')[1]") \

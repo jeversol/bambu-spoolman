@@ -24,7 +24,7 @@ if [ "$(id -u)" -eq 0 ]; then
         echo "event=config_permissions_migration_complete path=$configuration_directory uid=$runtime_uid gid=$runtime_gid"
     fi
 
-    exec su-exec "$runtime_uid:$runtime_gid" "$@"
+    exec gosu "$runtime_uid:$runtime_gid" "$@"
 fi
 
 if [ "$(id -u)" -ne "$runtime_uid" ] || [ "$(id -g)" -ne "$runtime_gid" ]; then

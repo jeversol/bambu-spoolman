@@ -6,7 +6,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-EXPECTED_TYPES = {"alpine", "node-pkg", "python-pkg"}
+# Keep Alpine support for comparisons against images published before migration.
+SUPPORTED_OS_FAMILIES = {"alpine", "debian"}
 SEVERITIES = {"UNKNOWN", "LOW", "MEDIUM", "HIGH", "CRITICAL"}
 
 
@@ -45,9 +46,10 @@ def parse_report(data):
     if not isinstance(metadata, dict) or not isinstance(metadata.get("OS"), dict):
         raise ValueError("Missing operating-system metadata")
     os_info = metadata["OS"]
-    if os_info.get("Family") != "alpine" or os_info.get("EOSL"):
-        raise ValueError("Expected a supported Alpine image")
-    os_version = required_text(os_info.get("Name"), "Alpine version")
+    os_family = required_text(os_info.get("Family"), "operating-system family")
+    if os_family not in SUPPORTED_OS_FAMILIES or os_info.get("EOSL"):
+        raise ValueError("Expected a supported Alpine or Debian image")
+    os_version = required_text(os_info.get("Name"), "operating-system version")
     results = data.get("Results")
     if not isinstance(results, list) or not results:
         raise ValueError("Missing scan results")
@@ -92,7 +94,7 @@ def parse_report(data):
             if severity not in {"HIGH", "CRITICAL"}:
                 continue
             # OS Target contains the image tag, which differs for base/candidate.
-            scope = f"alpine:{os_version}" if ecosystem == "alpine" else target
+            scope = f"{os_family}:{os_version}" if ecosystem == os_family else target
             package_path = vulnerability.get("PkgPath", "")
             if not isinstance(package_path, str):
                 raise ValueError("Invalid affected package path")
@@ -106,7 +108,7 @@ def parse_report(data):
                     severity,
                 )
             )
-    if not EXPECTED_TYPES.issubset(scanned_types):
+    if not {os_family, "node-pkg", "python-pkg"}.issubset(scanned_types):
         raise ValueError("Incomplete OS, Node, or Python vulnerability coverage")
     return Report(scanner_version, frozenset(findings))
 
