@@ -47,7 +47,7 @@ async function scenario(name, test) {
 }
 
 await scenario('ordinary timestamped releases wait and require timestamps', async () => {
-  for (const datasource of ['npm', 'pypi', 'github-tags', 'github-releases']) {
+  for (const datasource of ['npm', 'pypi', 'apk', 'github-tags', 'github-releases']) {
     const update = await effective({ datasource });
     assert.equal(update.minimumReleaseAge, '1 day', datasource);
     assert.equal(checkMinimumReleaseAge(update, recent).isPending, true);
@@ -78,7 +78,7 @@ await scenario('only tested validator updates opt into weekly automerge', async 
 });
 await scenario('production Python digest rebuilds are the only image automerge', async () => {
   const python = { manager: 'dockerfile', datasource: 'docker', packageFile: 'Dockerfile',
-    depName: 'python', packageName: 'python', currentValue: '3.14-slim-trixie' };
+    depName: 'python', packageName: 'python', currentValue: '3.14-alpine3.24' };
   assert.equal((await effective({ ...python, updateType: 'digest' })).automerge, true);
   for (const override of [{ packageFile: '.github/docker/Dockerfile.next-python' },
     { depName: 'node', packageName: 'node' },
@@ -123,15 +123,15 @@ await scenario('Node and Python updates stay within supported versions', async (
 });
 await scenario('prereleases stay in the chosen compatibility minor and out of production', async () => {
   const image = { manager: 'dockerfile', datasource: 'docker', versioning: 'docker',
-    depName: 'python', packageName: 'python', currentValue: '3.14-slim-trixie' };
+    depName: 'python', packageName: 'python', currentValue: '3.14-alpine3.24' };
   const production = await effective({ ...image, packageFile: 'Dockerfile' });
   const compatibility = await effective({ ...image, packageFile: '.github/docker/Dockerfile.next-python' });
-  const releases = ['3.15.0rc1-slim-trixie', '3.15.0-slim-trixie', '3.16.0rc1-slim-trixie'].map((version) => ({ version }));
+  const releases = ['3.15.0rc1-alpine3.24', '3.15.0-alpine3.24', '3.16.0rc1-alpine3.24'].map((version) => ({ version }));
   assert.equal(compatibility.ignoreUnstable, false);
   assert.equal(compatibility.automerge, false);
-  assert.deepEqual(filterVersions(production, '3.14-slim-trixie', undefined, releases, versioning('docker')), []);
-  assert.deepEqual(filterVersions(compatibility, '3.15.0a1-slim-trixie', undefined, releases, versioning('docker')).map((r) => r.version),
-    ['3.15.0rc1-slim-trixie', '3.15.0-slim-trixie']);
+  assert.deepEqual(filterVersions(production, '3.14-alpine3.24', undefined, releases, versioning('docker')), []);
+  assert.deepEqual(filterVersions(compatibility, '3.15.0a1-alpine3.24', undefined, releases, versioning('docker')).map((r) => r.version),
+    ['3.15.0rc1-alpine3.24', '3.15.0-alpine3.24']);
 });
 await scenario('real GitHub alerts override grouping, schedules, age and automerge at every severity', async () => {
   for (const severity of ['low', 'moderate', 'high', 'critical']) {

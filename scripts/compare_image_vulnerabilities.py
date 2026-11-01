@@ -6,7 +6,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-# Keep Alpine support for comparisons against images published before migration.
+# Accept both image families when comparing candidates and historical baselines.
 SUPPORTED_OS_FAMILIES = {"alpine", "debian"}
 SEVERITIES = {"UNKNOWN", "LOW", "MEDIUM", "HIGH", "CRITICAL"}
 
@@ -31,6 +31,24 @@ def required_text(value, description):
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"Missing or invalid {description}")
     return value
+
+
+def package_version(package, ecosystem):
+    version = required_text(package.get("Version"), "package version")
+    if ecosystem == "debian":
+        # Trivy splits dpkg inventory versions into epoch, upstream version,
+        # and Debian revision, but findings contain the complete version.
+        release = package.get("Release", "")
+        epoch = package.get("Epoch", 0)
+        if not isinstance(release, str):
+            raise ValueError("Invalid Debian package release")
+        if type(epoch) is not int or epoch < 0:
+            raise ValueError("Invalid Debian package epoch")
+        if release:
+            version = f"{version}-{release}"
+        if epoch:
+            version = f"{epoch}:{version}"
+    return version
 
 
 def parse_report(data):
@@ -71,7 +89,7 @@ def parse_report(data):
             inventory.add(
                 (
                     required_text(package.get("Name"), "package name"),
-                    required_text(package.get("Version"), "package version"),
+                    package_version(package, ecosystem),
                 )
             )
         scanned_types.add(ecosystem)
