@@ -79,7 +79,7 @@
       matchManagers: ['dockerfile'],
       matchFileNames: ['.github/docker/Dockerfile.next-python'],
       matchPackageNames: ['python'],
-      allowedVersions: '/^3\\.15(?:[.-]|$)/',
+      allowedVersions: '/^3\\.15(?:\\.\\d+(?:(?:a|b|rc)\\d+)?|-rc)?-alpine3\\.24$/',
       ignoreUnstable: false,
     },
     {
@@ -103,7 +103,7 @@
       automerge: true,
     },
     {
-      description: 'Look up Alpine packages in the production base release',
+      description: 'Look up Alpine runtime packages in the production base release',
       matchManagers: ['dockerfile'],
       matchFileNames: ['Dockerfile'],
       matchDatasources: ['apk'],
@@ -113,10 +113,11 @@
       groupName: 'alpine packages',
     },
     {
-      description: 'Keep the Node build toolchain on the supported LTS major',
-      matchDatasources: ['apk'],
-      matchPackageNames: ['nodejs'],
-      allowedVersions: '/^24\\./',
+      description: 'Keep the Node build toolchain on the supported LTS major and Debian release',
+      matchManagers: ['dockerfile'],
+      matchFileNames: ['Dockerfile'],
+      matchPackageNames: ['node'],
+      allowedVersions: '/^24-trixie-slim$/',
     },
     {
       description: 'Keep Node types aligned with the supported runtime major',

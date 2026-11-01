@@ -125,14 +125,18 @@ jobs:
           path: baseline-source
           persist-credentials: false
       - name: Obtain baseline image
+        id: baseline
         if: github.event_name == 'pull_request'
+        # A broken historical build must not prevent its repair. Without a
+        # baseline, enforce the stricter absolute candidate policy below.
+        continue-on-error: true
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: sh scripts/prepare-baseline-image.sh "$BASE_SHA" baseline-source "$GITHUB_REPOSITORY"
       - name: Prepare scan reports
         run: mkdir -p "$RUNNER_TEMP/security-reports"
       - name: Scan baseline with current vulnerability database
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && steps.baseline.outcome == 'success'
         uses: ./.github/actions/scan-image
         with:
           image-ref: bambu-spoolman:baseline
@@ -142,17 +146,20 @@ jobs:
         with:
           input: ${{ runner.temp }}/candidate/candidate.tar
           output: ${{ runner.temp }}/security-reports/candidate.json
-          skip-db-update: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
+          skip-db-update: ${{ github.event_name == 'pull_request' && steps.baseline.outcome == 'success' && 'true' || 'false' }}
       - name: Enforce image vulnerability policy
         env:
           EVENT_NAME: ${{ github.event_name }}
+          BASELINE_OUTCOME: ${{ steps.baseline.outcome }}
         run: |
-          args=()
-          if [ "$EVENT_NAME" = pull_request ]; then
-            args+=(--baseline "$RUNNER_TEMP/security-reports/baseline.json")
+          set --
+          if [ "$EVENT_NAME" = pull_request ] && [ "$BASELINE_OUTCOME" = success ]; then
+            set -- --baseline "$RUNNER_TEMP/security-reports/baseline.json"
+          elif [ "$EVENT_NAME" = pull_request ]; then
+            echo 'Baseline image unavailable; enforcing the absolute candidate vulnerability gate.' >> "$GITHUB_STEP_SUMMARY"
           fi
           python3 scripts/compare_image_vulnerabilities.py \
-            "$RUNNER_TEMP/security-reports/candidate.json" "${args[@]}" \
+            "$RUNNER_TEMP/security-reports/candidate.json" "$@" \
             --summary "$GITHUB_STEP_SUMMARY"
       - name: Retain vulnerability reports even when the gate fails
         if: always()

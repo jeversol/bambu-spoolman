@@ -10,9 +10,10 @@ COPY --from=uv /uv /uvx /bin/
 
 FROM python_base AS runtime_base
 
+# Keep the security floor while allowing maintained repository revisions.
 RUN apk add --no-cache \
         'libuuid>=2.42.3-r0' \
-        su-exec=0.3-r0 \
+        su-exec \
     && addgroup -S -g 10001 bambu-spoolman \
     && adduser -S -D -H -u 10001 -G bambu-spoolman bambu-spoolman \
     && mkdir -p /config \
@@ -67,10 +68,11 @@ RUN .venv/bin/python -m unittest discover -s tests \
     && touch /tmp/backend-verified
 
 
-# Node is a build/audit tool only; production runs Python and static assets.
-FROM runtime_base AS frontend_toolchain
+# Keep Node independent of Alpine's rotating package revisions. Production runs
+# Python and static assets; no Debian runtime libraries are copied into it.
+FROM node:24-trixie-slim@sha256:54f84b4cf8432b21aaffd5d3ce8d41e12cea0d10d33c09d2f3c9879d49d6b446 AS frontend_toolchain
 
-RUN apk add --no-cache nodejs=24.22.1-r0 npm=11.12.1-r0
+WORKDIR /app
 
 COPY frontend/package.json /app/frontend/package.json
 RUN pnpm_version=$(node -p "require('/app/frontend/package.json').packageManager.split('@')[1]") \

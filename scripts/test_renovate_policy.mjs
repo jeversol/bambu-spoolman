@@ -81,6 +81,7 @@ await scenario('production Python digest rebuilds are the only image automerge',
     depName: 'python', packageName: 'python', currentValue: '3.14-alpine3.24' };
   assert.equal((await effective({ ...python, updateType: 'digest' })).automerge, true);
   for (const override of [{ packageFile: '.github/docker/Dockerfile.next-python' },
+    { depName: 'node', packageName: 'node' },
     { depName: 'ghcr.io/astral-sh/uv', packageName: 'ghcr.io/astral-sh/uv' },
     { updateType: 'minor' }]) {
     assert.equal((await effective({ ...python, updateType: 'digest', ...override })).automerge, false);
@@ -108,11 +109,12 @@ await scenario('React runtime/type updates retain a coordinated group', async ()
   }
 });
 await scenario('Node and Python updates stay within supported versions', async () => {
-  const node = await effective({ datasource: 'apk', depName: 'nodejs', packageName: 'nodejs' });
+  const node = await effective({ manager: 'dockerfile', datasource: 'docker', packageFile: 'Dockerfile',
+    depName: 'node', packageName: 'node' });
   const python = await effective({ manager: 'pep621', datasource: 'python-version', depName: 'python', packageName: 'python' });
   const types = await effective({ depName: '@types/node', packageName: '@types/node' });
   for (const [update, current, versions, expected, scheme] of [
-    [node, '24.22.1-r0', ['24.23.0-r0', '25.0.0-r0'], ['24.23.0-r0'], 'apk'],
+    [node, '23-trixie-slim', ['24-trixie-slim', '25-trixie-slim', '24-alpine', '24-bookworm-slim'], ['24-trixie-slim'], 'docker'],
     [python, '3.14.0', ['3.14.1', '3.15.0'], ['3.14.1'], 'pep440'],
     [types, '24.0.0', ['24.1.0', '25.0.0'], ['24.1.0'], 'npm'],
   ]) {
@@ -124,12 +126,12 @@ await scenario('prereleases stay in the chosen compatibility minor and out of pr
     depName: 'python', packageName: 'python', currentValue: '3.14-alpine3.24' };
   const production = await effective({ ...image, packageFile: 'Dockerfile' });
   const compatibility = await effective({ ...image, packageFile: '.github/docker/Dockerfile.next-python' });
-  const releases = ['3.15.0rc1-alpine', '3.15.0-alpine', '3.16.0rc1-alpine'].map((version) => ({ version }));
+  const releases = ['3.15.0rc1-alpine3.24', '3.15.0-alpine3.24', '3.16.0rc1-alpine3.24'].map((version) => ({ version }));
   assert.equal(compatibility.ignoreUnstable, false);
   assert.equal(compatibility.automerge, false);
   assert.deepEqual(filterVersions(production, '3.14-alpine3.24', undefined, releases, versioning('docker')), []);
-  assert.deepEqual(filterVersions(compatibility, '3.15.0a1-alpine', undefined, releases, versioning('docker')).map((r) => r.version),
-    ['3.15.0rc1-alpine', '3.15.0-alpine']);
+  assert.deepEqual(filterVersions(compatibility, '3.15.0a1-alpine3.24', undefined, releases, versioning('docker')).map((r) => r.version),
+    ['3.15.0rc1-alpine3.24', '3.15.0-alpine3.24']);
 });
 await scenario('real GitHub alerts override grouping, schedules, age and automerge at every severity', async () => {
   for (const severity of ['low', 'moderate', 'high', 'critical']) {

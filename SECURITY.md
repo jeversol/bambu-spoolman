@@ -86,9 +86,15 @@ Renovate vulnerability updates require human review rather than automerge.
   gate. Finding identity includes ecosystem, location, package, installed
   version, advisory, and severity. A different affected version, location, or
   increased severity is new risk and blocks, even without an available fix.
-- Missing, malformed, unsupported, or incomplete reports, failed baseline builds,
-  and failed scans fail the check. A failed baseline never means a clean baseline.
-  Reports retain existing, introduced, and resolved findings for operator review.
+- If the exact base image cannot be obtained or rebuilt, `image-security`
+  applies the absolute candidate gate: every high/critical finding blocks. This
+  allows repairs to an unbuildable base without assuming its findings are clean
+  or granting exemptions based on missing evidence. The fallback is reported in
+  the job summary.
+- Missing, malformed, unsupported, or incomplete reports and failed scans fail
+  the check. Once a baseline image is obtained, its scan must succeed; scan or
+  report failures cannot trigger the absolute-gate fallback. Reports retain
+  existing, introduced, and resolved findings for operator review.
 - Complete Python and npm audits are diagnostic on PRs; findings or audit
   service failures appear in their logs and summary. They do not replace either
   required security gate. Existing findings remain remediation work and are
