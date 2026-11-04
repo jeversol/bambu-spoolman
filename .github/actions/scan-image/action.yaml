@@ -55,7 +55,7 @@ runs:
           cd "$download_dir"
           awk -v archive="$archive" '$2 == archive { print }' "$checksums" > checksum.txt
           test -s checksum.txt
-          sha256sum --check --strict checksum.txt
+          sha256sum -c checksum.txt
           tar -xzf "$archive" trivy
           ./trivy --version
         )

@@ -36,10 +36,11 @@ class TrivyInstallTests(unittest.TestCase):
                 f"{checksum}  {archive.name}\n"
             )
             for name, body in {
-                "uname": '#!/bin/sh\necho x86_64\n',
+                "uname": "#!/bin/sh\necho x86_64\n",
                 "curl": (
-                    '#!/bin/bash\nexit 6\n' if download_failure else
-                    '#!/bin/bash\nwhile [ "$1" != --output ]; do shift; done\n'
+                    "#!/bin/sh\nexit 6\n"
+                    if download_failure
+                    else '#!/bin/sh\nwhile [ "$1" != --output ]; do shift; done\n'
                     'cp "$FIXTURES/${3##*/}" "$2"\n'
                 ),
             }.items():
@@ -48,11 +49,18 @@ class TrivyInstallTests(unittest.TestCase):
                 script.chmod(0o755)
             github_path = folder / "github-path"
             result = subprocess.run(
-                ["bash", "-e", "-o", "pipefail", "-c", textwrap.dedent(command)],
-                env={**os.environ, "PATH": f"{folder}:{os.environ['PATH']}",
-                     "FIXTURES": directory, "RUNNER_TEMP": directory,
-                     "TRIVY_VERSION": f"v{version}", "GITHUB_PATH": str(github_path)},
-                capture_output=True, text=True, check=False,
+                ["/bin/sh", "-e", "-c", textwrap.dedent(command)],
+                env={
+                    **os.environ,
+                    "PATH": f"{folder}:{os.environ['PATH']}",
+                    "FIXTURES": directory,
+                    "RUNNER_TEMP": directory,
+                    "TRIVY_VERSION": f"v{version}",
+                    "GITHUB_PATH": str(github_path),
+                },
+                capture_output=True,
+                text=True,
+                check=False,
             )
             return result, github_path.exists()
 
