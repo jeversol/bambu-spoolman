@@ -30,6 +30,36 @@ runs:
         fi
         test -n "$REPORT_PATH"
         mkdir -p "$(dirname "$REPORT_PATH")"
+    - name: Install Trivy from GitHub Releases
+      shell: bash
+      env:
+        # renovate: datasource=github-releases depName=aquasecurity/trivy
+        TRIVY_VERSION: v0.76.1
+      run: |
+        case "$(uname -m)" in
+          x86_64) arch=64bit ;;
+          aarch64) arch=ARM64 ;;
+          *) echo 'Unsupported Trivy runner architecture' >&2; exit 1 ;;
+        esac
+        download_dir=$(mktemp -d "$RUNNER_TEMP/trivy.XXXXXX")
+        version=${TRIVY_VERSION#v}
+        archive="trivy_${version}_Linux-${arch}.tar.gz"
+        checksums="trivy_${version}_checksums.txt"
+        release="https://github.com/aquasecurity/trivy/releases/download/${TRIVY_VERSION}"
+        for file in "$archive" "$checksums"; do
+          curl --fail --show-error --silent --location \
+            --retry 4 --retry-all-errors --connect-timeout 15 --max-time 180 \
+            --output "$download_dir/$file" "$release/$file"
+        done
+        (
+          cd "$download_dir"
+          awk -v archive="$archive" '$2 == archive { print }' "$checksums" > checksum.txt
+          test -s checksum.txt
+          sha256sum -c checksum.txt
+          tar -xzf "$archive" trivy
+          ./trivy --version
+        )
+        echo "$download_dir" >> "$GITHUB_PATH"
     - name: Collect vulnerabilities and package inventories
       uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
       env:
@@ -46,5 +76,4 @@ runs:
         format: json
         output: ${{ inputs.output }}
         cache: false
-        # renovate: datasource=github-releases depName=aquasecurity/trivy
-        version: v0.76.1
+        skip-setup-trivy: "true"

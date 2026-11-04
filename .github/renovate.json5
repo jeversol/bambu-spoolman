@@ -34,6 +34,15 @@
   customManagers: [
     {
       customType: 'regex',
+      managerFilePatterns: ['/^\\.github/actions/scan-image/action\\.yaml$/'],
+      matchStrings: [
+        'TRIVY_VERSION: (?<currentValue>v[^\\s]+)',
+      ],
+      depNameTemplate: 'aquasecurity/trivy',
+      datasourceTemplate: 'github-releases',
+    },
+    {
+      customType: 'regex',
       managerFilePatterns: ['/^scripts/security-audit\\.sh$/'],
       matchStrings: [
         'uvx pip-audit==(?<currentValue>[^ ]+)',
