@@ -1,6 +1,6 @@
 FROM ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490 AS uv
 
-FROM python:3.14-alpine3.24@sha256:b15fd707501f872b2d46a8edacb18aca52db393460d17a60a20e7231dbdb3263 AS python_base
+FROM python:3.14-alpine3.24@sha256:a18b20ad69e74df6cf6d2e1b1a260d7a1ecf5380fd83b310f83ba88c461cf894 AS python_base
 
 WORKDIR /app
 
