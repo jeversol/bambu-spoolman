@@ -14,7 +14,7 @@ from loguru import logger
 from bambu_spoolman.admission import MutationAdmission
 from bambu_spoolman.assignments import AssignmentError, assign_spool
 from bambu_spoolman.bambu_mqtt import stateful_printer_info
-from bambu_spoolman.broker.consumption_recovery import accounting_status
+from bambu_spoolman.broker.accounting import accounting_status
 from bambu_spoolman.location_sync import LocationQueueFull
 from bambu_spoolman.rfid import (
     RfidError,

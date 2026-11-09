@@ -6,12 +6,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from bambu_spoolman.broker import checkpoint
+from bambu_spoolman.broker.accounting import accounting_status
 from bambu_spoolman.broker.consumption import ConsumptionDelivery
-from bambu_spoolman.broker.consumption_recovery import (
-    accounting_status,
-    resolve_consumption,
-)
-from bambu_spoolman.broker.consumption_state import AmbiguousConsumption
 from bambu_spoolman.broker.print_checkpoint import PrintCheckpoint
 
 
@@ -102,45 +98,22 @@ class ConsumptionDeliveryTests(unittest.TestCase):
         self.assertTrue(self.deliver(recovered))
         self.assertEqual(self.client.requests, [(42, 10), (43, 20)])
 
-    def test_partial_failure_recovery_does_not_repeat_successful_segment(self):
-        self.client.fail_before = 43
-        with self.assertRaises(AmbiguousConsumption):
-            self.deliver()
-        recovered = self.restart()
-        self.assertEqual(recovered.progress.spent_segments, {0: {"0:0"}})
-        self.assertEqual(recovered.progress.pending_consumption["spool_id"], 43)
-        self.client.fail_before = None
-        with self.assertRaises(AmbiguousConsumption):
-            self.deliver(recovered)
-        status = accounting_status(self.client.endpoint)
-        resolve_consumption(
-            status["pending"]["intentId"],
-            43,
-            "not-applied",
-            "Independent fixture evidence: request did not apply",
-            self.client.endpoint,
-        )
+    def test_uncertain_update_warns_and_continues_with_next_segment(self):
+        self.client.fail_before = 42
+        self.assertTrue(self.deliver())
+        self.assertEqual(self.client.requests, [(42, 10), (43, 20)])
+        self.assertEqual(self.client.used, {42: 100, 43: 220})
+        self.assertIn("spool 42", accounting_status()["warning"])
         self.assertTrue(self.deliver(self.restart()))
-        self.assertEqual(self.client.requests, [(42, 10), (43, 20), (43, 20)])
-        self.assertEqual(self.client.used, {42: 110, 43: 220})
+        self.assertEqual(len(self.client.requests), 2)
 
-    def test_applied_timeout_requires_explicit_confirmation_after_restart(self):
+    def test_applied_timeout_does_not_repeat_after_restart(self):
         self.client.fail_after = 42
-        with self.assertRaises(AmbiguousConsumption):
-            self.deliver(plan={(0, 0): 10})
-        with self.assertRaises(AmbiguousConsumption):
-            self.deliver(self.restart(), plan={(0, 0): 10})
-        status = accounting_status(self.client.endpoint)
-        resolve_consumption(
-            status["pending"]["intentId"],
-            42,
-            "applied",
-            "Fixture transaction committed",
-            self.client.endpoint,
-        )
+        self.assertTrue(self.deliver(plan={(0, 0): 10}))
         self.assertTrue(self.deliver(self.restart(), plan={(0, 0): 10}))
         self.assertEqual(self.client.requests, [(42, 10)])
         self.assertIsNone(checkpoint.get_checkpoint_metadata()["pending_consumption"])
+        self.assertIn("could not be confirmed", accounting_status()["warning"])
 
     def test_failed_intent_save_never_sends_consumption(self):
         with patch(
@@ -174,8 +147,7 @@ class ConsumptionDeliveryTests(unittest.TestCase):
             checkpoint.get_checkpoint_metadata()["pending_consumption"]["segment_key"],
             "0:1",
         )
-        with self.assertRaises(AmbiguousConsumption):
-            self.deliver(self.restart(), plan={(0, 0): 10, (0, 1): 20})
+        self.assertTrue(self.deliver(self.restart(), plan={(0, 0): 10, (0, 1): 20}))
         # The still-running process observed success and retained that fact.
         self.assertTrue(self.deliver(self.journal, plan={(0, 0): 10, (0, 1): 20}))
         self.assertEqual(self.client.requests, [(42, 10), (43, 20)])
@@ -232,18 +204,17 @@ class ConsumptionDeliveryTests(unittest.TestCase):
             self.model.read_bytes(),
         )
 
-    def test_changed_external_totals_cannot_authorize_acknowledgment_or_replay(self):
-        self.client.fail_after = 42
-        with self.assertRaises(AmbiguousConsumption):
-            self.deliver(plan={(0, 0): 10})
-        for observed in (90, 100, 110, 130):
-            self.client.used[42] = observed
-            with patch.object(self.client, "get_spool") as read:
-                with self.assertRaises(AmbiguousConsumption):
-                    self.deliver(self.restart(), plan={(0, 0): 10})
-                read.assert_not_called()
-        self.assertEqual(self.client.requests, [(42, 10)])
-        self.assertTrue(accounting_status(self.client.endpoint)["blocked"])
+    def test_inflight_checkpoint_warns_and_continues_without_replay(self):
+        self.journal.progress.pending_consumption = {
+            "layer": 0,
+            "segment_key": "0:0",
+            "spool_id": 42,
+            "delivery_state": "in_flight",
+        }
+        self.journal.save(0)
+        self.assertTrue(self.deliver(self.restart()))
+        self.assertEqual(self.client.requests, [(43, 20)])
+        self.assertIn("spool 42", accounting_status()["warning"])
 
     def test_failed_inflight_save_is_known_unsent_and_can_resume_original_spool(self):
         save = checkpoint._save_checkpoint_metadata
@@ -269,7 +240,7 @@ class ConsumptionDeliveryTests(unittest.TestCase):
         self.assertTrue(self.deliver(self.restart(), plan={(0, 0): 10}))
         self.assertEqual(self.client.requests, [(42, 10)])
 
-    def test_changed_server_blocks_prepared_work(self):
+    def test_changed_server_warns_and_skips_prepared_work(self):
         save = checkpoint._save_checkpoint_metadata
 
         def fail_issue(metadata):
@@ -286,11 +257,10 @@ class ConsumptionDeliveryTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 self.deliver(plan={(0, 0): 10})
         self.client.endpoint = "http://different.test"
-        with self.assertRaises(AmbiguousConsumption):
-            self.deliver(self.restart(), plan={(0, 0): 10})
+        self.assertTrue(self.deliver(self.restart(), plan={(0, 0): 10}))
         self.assertEqual(self.client.requests, [])
 
-    def test_active_request_does_not_report_a_false_pause(self):
+    def test_active_request_does_not_report_a_false_warning(self):
         entered, release = threading.Event(), threading.Event()
         self.client.fail_after = 42
 
@@ -299,23 +269,12 @@ class ConsumptionDeliveryTests(unittest.TestCase):
             release.wait(3)
 
         self.client.before_send = delay
-        errors = []
-
-        def send():
-            try:
-                self.deliver(plan={(0, 0): 10})
-            except AmbiguousConsumption as error:
-                errors.append(error)
-
-        worker = threading.Thread(target=send)
+        worker = threading.Thread(target=lambda: self.deliver(plan={(0, 0): 10}))
         worker.start()
         try:
             self.assertTrue(entered.wait(1))
-            status = accounting_status(self.client.endpoint)
-            self.assertFalse(status["blocked"])
-            self.assertEqual(status["pending"]["state"], "sending")
+            self.assertIsNone(accounting_status()["warning"])
         finally:
             release.set()
             worker.join(1)
-        self.assertEqual(len(errors), 1)
-        self.assertTrue(accounting_status(self.client.endpoint)["blocked"])
+        self.assertIn("could not be confirmed", accounting_status()["warning"])

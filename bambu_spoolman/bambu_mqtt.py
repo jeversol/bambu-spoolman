@@ -276,7 +276,7 @@ def require_dispatch_reconciliation():
         fault = settings[DISPATCH_FAULT_KEY]
         raise RuntimeError(
             "MQTT dispatch fault requires reconciliation before restart: "
-            f"{fault}. See docs/consumption-recovery.md MQTT overload recovery."
+            f"{fault}. Filament usage totals may be inaccurate."
         )
 
 

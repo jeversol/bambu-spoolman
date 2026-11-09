@@ -11,8 +11,8 @@ from bambu_spoolman.bambu_mqtt import (
     require_dispatch_reconciliation,
     stateful_printer_info,
 )
+from bambu_spoolman.broker.accounting import accounting_lease
 from bambu_spoolman.broker.automatic_spool_switch import AutomaticSpoolSwitch
-from bambu_spoolman.broker.consumption_recovery import accounting_lease
 from bambu_spoolman.broker.filament_usage_tracker import FilamentUsageTracker
 from bambu_spoolman.build_info import get_build_info
 from bambu_spoolman.http_api import serve as run_http_server

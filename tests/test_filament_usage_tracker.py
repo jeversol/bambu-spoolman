@@ -594,7 +594,7 @@ G1 E3
 
     @patch("bambu_spoolman.broker.checkpoint.update_layer")
     @patch("bambu_spoolman.broker.filament_usage_tracker.load_settings")
-    def test_pauses_timed_out_consumption_without_guessing_from_totals(
+    def test_warns_on_timed_out_consumption_and_continues(
         self, load_settings, update_layer
     ):
         self.tracker.active_model = {0: {0: 10}}
@@ -629,9 +629,8 @@ G1 E3
         self.tracker.spoolman_client.consume_spool.assert_called_once_with(
             99, length=10
         )
-        self.assertNotIn(0, self.tracker.checkpoint.progress.spent_layers)
-        self.assertIsNotNone(self.tracker.checkpoint.progress.pending_consumption)
-        self.assertTrue(self.tracker._accounting_blocked)
+        self.assertIn(0, self.tracker.checkpoint.progress.spent_layers)
+        self.assertIsNone(self.tracker.checkpoint.progress.pending_consumption)
         self.assertIsNone(self.tracker._retry_timer)
         self.assertEqual(self.tracker.spoolman_client.get_spool.call_count, 1)
 

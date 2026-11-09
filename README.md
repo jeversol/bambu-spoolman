@@ -128,7 +128,3 @@ sh scripts/security-audit.sh
 - Custom filament or layer-change G-code. Detection uses `M620` for filament
   changes and `M73` for layer changes.
 - Multiple AMS units.
-
-If the dashboard reports paused filament accounting, follow the
-[consumption recovery procedure](docs/consumption-recovery.md). An uncertain
-Spoolman usage increment requires an explicit decision; restarting does not clear it.

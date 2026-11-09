@@ -7,13 +7,8 @@ from typing import Protocol
 
 from loguru import logger
 
-from bambu_spoolman.broker.consumption_state import (
-    AmbiguousConsumption,
-    endpoint_scope,
-    forget_observation,
-    is_blocked,
-    observing_request,
-)
+from bambu_spoolman.broker.accounting import warn_uncertain_consumption
+from bambu_spoolman.broker.consumption_state import endpoint_scope, is_uncertain
 
 
 @dataclass
@@ -112,7 +107,6 @@ class ConsumptionDelivery:
                 self.journal.progress.pending_consumption = pending
                 raise
 
-            forget_observation(pending)
             logger.info(
                 "event=filament_consumed task_id={} layer={} logical_filament={} "
                 "tray={} spool_id={} length_mm={:.3f}",
@@ -167,37 +161,36 @@ class ConsumptionDelivery:
     def _send_pending(self, layer):
         pending = self.journal.progress.pending_consumption
         if pending.get("endpoint_scope") != endpoint_scope(self.client.endpoint):
-            raise AmbiguousConsumption()
-        with observing_request(pending):
-            pending["delivery_state"] = "in_flight"
-            try:
-                self.journal.save(layer)
-            except Exception:
-                # No request has been issued. Keep that fact in memory so a later
-                # successful save/retry need not invent an uncertain outcome.
-                pending["delivery_state"] = "prepared"
-                raise
-            try:
-                self.client.consume_spool(pending["spool_id"], length=pending["length"])
-            except Exception as error:
-                raise AmbiguousConsumption() from error
-            # This process observed success. If final acknowledgment persistence
-            # fails, retries can persist that fact without incrementing usage again.
+            warn_uncertain_consumption(pending)
             pending["delivery_state"] = "confirmed"
+            return
+        pending["delivery_state"] = "in_flight"
+        try:
+            self.journal.save(layer)
+        except Exception:
+            pending["delivery_state"] = "prepared"
+            raise
+        try:
+            self.client.consume_spool(pending["spool_id"], length=pending["length"])
+        except Exception:
+            warn_uncertain_consumption(pending)
+        # Avoid repeating a request whose response was lost. A warning is enough
+        # for approximate inventory tracking; later segments can continue.
+        pending["delivery_state"] = "confirmed"
 
     def _reconcile_pending_consumption(self, layer, spent_segments):
         pending = self.journal.progress.pending_consumption
         if pending is None:
             return
-        if is_blocked(pending, self.client.endpoint):
-            raise AmbiguousConsumption()
+        if is_uncertain(pending, self.client.endpoint):
+            warn_uncertain_consumption(pending)
+            pending["delivery_state"] = "confirmed"
         if int(pending.get("layer", -1)) != int(layer):
             raise RuntimeError(
                 "Consumption intent belongs to a different pending layer"
             )
         if pending["delivery_state"] == "prepared":
-            # Only never-issued or explicitly operator-authorized work reaches
-            # this path. Use its ORIGINAL spool, even if tray assignments moved.
+            # Retry only work known to be unsent, using its original spool.
             self._send_pending(layer)
         segment_key = str(pending["segment_key"])
         was_spent = segment_key in spent_segments
@@ -210,7 +203,6 @@ class ConsumptionDelivery:
             if not was_spent:
                 spent_segments.discard(segment_key)
             raise
-        forget_observation(pending)
 
 
 def _segment_key(filament, tray):

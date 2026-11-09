@@ -72,14 +72,13 @@ try {
     status: accountingFailure ? 500 : 200,
     contentType: "application/json",
     body: JSON.stringify(accountingFailure ? { error: "status unavailable" } : {
-      blocked: true, pending: { spoolId: 42, lengthMm: 10 },
+      warning: "A filament usage update to spool 42 could not be confirmed. Usage totals may be inaccurate.",
     }),
   }));
   await failure(true);
   await page.reload();
-  await visible(page.getByRole("alert").filter({ hasText: "Filament accounting is paused" }));
+  await visible(page.getByRole("alert").filter({ hasText: "Usage totals may be inaccurate" }));
   await visible(page.getByRole("alert").filter({ hasText: "Could not refresh" }));
-  assert.equal(await page.getByRole("link", { name: "consumption recovery instructions" }).count(), 1);
   accountingFailure = true;
   await failure(false);
   await page.reload();
