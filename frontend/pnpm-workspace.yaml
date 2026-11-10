@@ -5,3 +5,7 @@ minimumReleaseAge: 0
 engineStrict: true
 
 pmOnFail: ignore
+
+# CVE-2026-118764; remove once lint dependencies adopt minimatch 11.
+overrides:
+  "minimatch@10": "11.0.1"
