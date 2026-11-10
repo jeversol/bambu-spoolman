@@ -6,26 +6,14 @@ export function AccountingNotice() {
     queryKey: ["accounting-status"],
     queryFn: ({ signal }) =>
       apiRequest<{
-        blocked: boolean;
-        pending: { spoolId: number; lengthMm: number } | null;
+        warning: string | null;
       }>("/accounting", { signal }),
     refetchInterval: 5000,
   });
-  if (query.data?.blocked) {
+  if (query.data?.warning) {
     return (
       <div role="alert" className="mx-auto max-w-6xl p-4 text-destructive">
-        Filament accounting is paused. An update to spool{" "}
-        {query.data.pending?.spoolId} needs confirmation; usage totals may be
-        incomplete. Stop the container and follow the{" "}
-        <a
-          className="underline"
-          href="https://github.com/jeversol/bambu-spoolman/blob/main/docs/consumption-recovery.md"
-          target="_blank"
-          rel="noreferrer"
-        >
-          consumption recovery instructions
-        </a>
-        .
+        {query.data.warning}
       </div>
     );
   }

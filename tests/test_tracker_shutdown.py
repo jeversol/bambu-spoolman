@@ -156,16 +156,10 @@ class TrackerShutdownTests(unittest.TestCase):
         self.assertTrue(tracker.close(timeout=2))
         tracker.spoolman_client.consume_spool.assert_called_once_with(42, length=10)
         metadata = get_checkpoint_metadata()
+        self.assertEqual(metadata["spent_segments"], {"0": ["0:0"]})
+        self.assertIsNone(metadata["pending_consumption"])
         if timeout:
-            self.assertEqual(metadata["pending_consumption"]["segment_key"], "0:0")
-            self.assertEqual(
-                metadata["pending_consumption"]["baseline_used_length"], 100
-            )
-            self.assertEqual(metadata["pending_consumption"]["length"], 10)
-            self.assertEqual(metadata["spent_segments"], {"0": []})
-        else:
-            self.assertEqual(metadata["spent_segments"], {"0": ["0:0"]})
-            self.assertIsNone(metadata["pending_consumption"])
+            self.assertIn("could not be confirmed", metadata["accounting_warning"])
         self.assertEqual(metadata["spent_layers"], [])
         self.assertNotIn(0, tracker.checkpoint.progress.spent_layers)
         self.assertIsNone(tracker._retry_timer)
@@ -173,7 +167,7 @@ class TrackerShutdownTests(unittest.TestCase):
     def test_stop_finishes_current_segment_checkpoint_without_starting_next(self):
         self.run_segment_during_stop()
 
-    def test_stop_retains_timed_out_consumption_intent_on_disk(self):
+    def test_stop_retains_warning_for_timed_out_consumption(self):
         self.run_segment_during_stop(timeout=True)
 
     def test_stopped_tracker_cannot_schedule_new_retries(self):

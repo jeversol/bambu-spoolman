@@ -4,7 +4,6 @@ from typing import NamedTuple, Protocol, TypedDict
 
 from bambu_spoolman.broker import checkpoint
 from bambu_spoolman.broker.consumption import ConsumptionProgress
-from bambu_spoolman.broker.consumption_state import is_blocked
 
 
 class CheckpointContext(TypedDict):
@@ -57,12 +56,6 @@ class PrintCheckpoint:
     def __init__(self, context: ContextSource):
         self.context = context
         self.progress = ConsumptionProgress()
-
-    def has_blocked_consumption(self, endpoint):
-        pending = self.progress.pending_consumption
-        if pending is None:
-            pending = checkpoint.get_checkpoint_metadata().get("pending_consumption")
-        return is_blocked(pending, endpoint)
 
     def saved_pending_journal(self):
         metadata = checkpoint.get_checkpoint_metadata()
