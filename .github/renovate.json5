@@ -2,10 +2,13 @@
   $schema: 'https://docs.renovatebot.com/renovate-schema.json',
   extends: ['config:recommended', ':enablePreCommit'],
   timezone: 'America/New_York',
-  prConcurrentLimit: 5,
+  // One routine batch, built overnight on Monday in the existing project timezone.
+  schedule: ['* 0-5 * * 1'],
+  updateNotScheduled: false,
+  prConcurrentLimit: 1,
   dependencyDashboard: true,
-  // Re-test Renovate branches whenever main advances, not just on conflicts.
-  rebaseWhen: 'behind-base-branch',
+  // Respect branch protection without rebuilding every batch on every main push.
+  rebaseWhen: 'auto',
   prCreation: 'immediate',
   // Only timestamp-capable release sources receive the cooldown below.
   // pnpm's own age check remains disabled.
@@ -13,22 +16,24 @@
   minimumReleaseAgeBehaviour: 'timestamp-required',
   internalChecksFilter: 'strict',
   // Dependabot supplies intelligence; Renovate alone creates update PRs.
-  // All security fixes bypass cooldowns and schedules, but require human review.
+  // Supported security fixes bypass routine gates and require human review.
+  // Lockfile-only transitive vulnerabilities may still need a manual fix.
   vulnerabilityAlerts: {
     enabled: true,
     minimumReleaseAge: null,
+    schedule: [],
+    updateNotScheduled: true,
+    dependencyDashboardApproval: false,
     labels: ['security'],
     prCreation: 'immediate',
     rangeStrategy: 'update-lockfile',
     vulnerabilityFixStrategy: 'lowest',
     automerge: false,
   },
-  // Direct-dependency updates refresh only the packages involved in that
-  // update. Refresh every lockfile weekly as a separate, reviewable PR so
-  // transitive dependencies do not remain pinned indefinitely.
+  // Renovate cannot combine full lockfile refreshes with dependency updates.
+  // The weekly batch updates relevant locks, not the whole transitive graph.
   lockFileMaintenance: {
-    enabled: true,
-    schedule: ['before 4am on monday'],
+    enabled: false,
   },
   // Track shell-script pins alongside the built-in package and image managers.
   customManagers: [
@@ -51,30 +56,30 @@
       datasourceTemplate: 'pypi',
     },
   ],
-  // Renovate checks release age and CI before merging; GitHub rules still apply.
+  // Every batch requires human review and CI, including images and validator pins.
   automerge: false,
   ignoreTests: false,
   automergeType: 'pr',
   platformAutomerge: false,
   packageRules: [
     {
-      description: 'Wait at least one day for timestamped package and tool releases',
+      description: 'Combine routine updates across all managers into one weekly PR',
+      matchPackageNames: ['*'],
+      groupName: 'weekly maintenance',
+      groupSlug: 'weekly-maintenance',
+      groupSingleUpdates: true,
+      separateMajorMinor: false,
+      separateMinorPatch: false,
+    },
+    {
+      description: 'Wait at least seven days for timestamped package and tool releases',
       matchDatasources: ['npm', 'pypi', 'github-tags', 'github-releases', 'apk'],
-      minimumReleaseAge: '1 day',
+      minimumReleaseAge: '7 days',
     },
     {
       description: 'Do not invent release ages for digest changes or existing pins',
       matchUpdateTypes: ['digest', 'pinDigest', 'pin', 'lockFileMaintenance'],
       minimumReleaseAge: null,
-    },
-    {
-      description: 'Update and validate the Renovate hook once a week',
-      matchManagers: ['pre-commit'],
-      matchPackageNames: ['renovatebot/pre-commit-hooks'],
-      matchUpdateTypes: ['patch', 'minor'],
-      groupName: 'renovate validator',
-      schedule: ['* 0-4 * * 1'],
-      automerge: true,
     },
     {
       description: 'Keep the Python container on the project-supported minor',
@@ -90,6 +95,10 @@
       matchPackageNames: ['python'],
       allowedVersions: '/^3\\.15(?:\\.\\d+(?:(?:a|b|rc)\\d+)?|-rc)?-alpine3\\.24$/',
       ignoreUnstable: false,
+      // Compatibility experiments are planned work, outside the routine batch.
+      dependencyDashboardApproval: true,
+      groupName: null,
+      groupSlug: null,
     },
     {
       description: 'Keep the Python project requirement on the supported minor',
@@ -104,14 +113,6 @@
       rangeStrategy: 'pin',
     },
     {
-      description: 'Automerge verified production Python base digest updates',
-      matchManagers: ['dockerfile'],
-      matchFileNames: ['Dockerfile'],
-      matchPackageNames: ['python'],
-      matchUpdateTypes: ['digest'],
-      automerge: true,
-    },
-    {
       description: 'Look up Alpine runtime packages in the production base release',
       matchManagers: ['dockerfile'],
       matchFileNames: ['Dockerfile'],
@@ -119,7 +120,6 @@
       registryUrls: [
         'https://dl-cdn.alpinelinux.org/alpine?branch=v3.24&components=main,community&arch=x86_64',
       ],
-      groupName: 'alpine packages',
     },
     {
       description: 'Keep the Node build toolchain on the supported LTS major and Debian release',
@@ -135,35 +135,11 @@
       allowedVersions: '<25',
     },
     {
-      description: 'Group minor and patch npm updates',
-      matchManagers: ['npm'],
-      matchUpdateTypes: ['minor', 'patch'],
-      groupName: 'npm minor and patch dependencies',
-    },
-    {
-      description: 'Group minor and patch Python updates',
-      matchManagers: ['pep621', 'pip_requirements', 'pip_setup', 'poetry', 'uv'],
-      matchUpdateTypes: ['minor', 'patch'],
-      groupName: 'python minor and patch dependencies',
-    },
-    {
-      description: 'Group minor and patch Docker updates',
-      matchManagers: ['dockerfile', 'docker-compose'],
-      matchDatasources: ['docker'],
-      matchUpdateTypes: ['minor', 'patch'],
-      groupName: 'docker minor and patch dependencies',
-    },
-    {
-      description: 'Keep React runtime and type packages aligned',
-      matchManagers: ['npm'],
-      matchPackageNames: ['react', 'react-dom', '@types/react', '@types/react-dom'],
-      groupName: 'react packages',
-    },
-    {
-      description: 'Group minor, patch, and digest GitHub Actions updates',
-      matchManagers: ['github-actions'],
-      matchUpdateTypes: ['minor', 'patch', 'digest'],
-      groupName: 'github actions minor and patch dependencies',
+      description: 'Approve major upgrades and package replacements as planned work',
+      matchUpdateTypes: ['major', 'replacement'],
+      dependencyDashboardApproval: true,
+      groupName: null,
+      groupSlug: null,
     },
   ],
 }
