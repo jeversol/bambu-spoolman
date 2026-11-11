@@ -70,7 +70,7 @@ RUN .venv/bin/python -m unittest discover -s tests \
 
 # Keep Node independent of Alpine's rotating package revisions. Production runs
 # Python and static assets; no Debian runtime libraries are copied into it.
-FROM node:24-trixie-slim@sha256:0820eaa85e07d0490446dd01d14707e17e6108a36988cf374899cd057eb3812d AS frontend_toolchain
+FROM node:24-trixie-slim@sha256:6418e1ff99a5db6608cd55a020036dde6b7d18df9a0b7e44209b4ef5891766fb AS frontend_toolchain
 
 WORKDIR /app
 
