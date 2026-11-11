@@ -1,5 +1,5 @@
 # The image tag owns both browser binaries and the matching driver version.
-FROM mcr.microsoft.com/playwright:v1.65.0-noble@sha256:6e3fb709361521eb27161606e6da6d2674e5e89fa16516cb37d6fdd91372273d
+FROM mcr.microsoft.com/playwright:v1.65.0-noble@sha256:9beb546099e11f52d62e505537914870e01a67e0e6b00ae41da4775324e73dbe
 WORKDIR /browser
 COPY .github/docker/Dockerfile.browser /tmp/browser.Dockerfile
 RUN version=$(sed -n 's|^FROM mcr.microsoft.com/playwright:v\([^@]*\)-noble@.*|\1|p' /tmp/browser.Dockerfile) \
