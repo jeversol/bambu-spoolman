@@ -6,7 +6,7 @@
   schedule: ['* 0-5 * * 1'],
   updateNotScheduled: false,
   prConcurrentLimit: 1,
-  dependencyDashboard: true,
+  dependencyDashboard: { enabled: true },
   // Respect branch protection without rebuilding every batch on every main push.
   rebaseWhen: 'auto',
   prCreation: 'immediate',
